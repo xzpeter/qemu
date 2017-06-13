@@ -42,6 +42,7 @@
 #include "qemu/error-report.h"
 #include "exec/ramlist.h"
 #include "hw/intc/intc.h"
+#include "hw/iommu.h"
 #include "migration/snapshot.h"
 #include "migration/misc.h"
 
@@ -2827,4 +2828,9 @@ void hmp_info_vm_generation_id(Monitor *mon, const QDict *qdict)
     }
     hmp_handle_error(mon, &err);
     qapi_free_GuidInfo(info);
+}
+
+void hmp_info_iommu(Monitor *mon, const QDict *qdict)
+{
+    arch_iommu_info(mon, qdict);
 }
