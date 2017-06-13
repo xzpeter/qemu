@@ -3028,6 +3028,7 @@ static void vtd_info_dump(X86IOMMUState *x86_iommu, Monitor *mon,
                           const QDict *qdict)
 {
     IntelIOMMUState *s = INTEL_IOMMU_DEVICE(x86_iommu);
+    bool clear_stats = qdict_get_try_bool(qdict, "clear_stats", false);
 
     DUMP("Version: %d\n", 1);
     DUMP("Cap: 0x%"PRIx64"\n", s->cap);
@@ -3067,6 +3068,10 @@ static void vtd_info_dump(X86IOMMUState *x86_iommu, Monitor *mon,
     DUMP("Misc: next_frr=%d, context_gen=%d, buggy_eim=%d\n",
          s->next_frcd_reg, s->context_cache_gen, s->buggy_eim);
     DUMP("      iotlb_size=%d\n", g_hash_table_size(s->iotlb));
+
+    if (clear_stats) {
+        vtd_reset_stats(s);
+    }
 }
 #undef DUMP
 
