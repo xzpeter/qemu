@@ -274,6 +274,12 @@ static void pc_q35_init(MachineState *machine)
         nvdimm_init_acpi_state(&pcms->acpi_nvdimm_state, system_io,
                                pcms->fw_cfg, OBJECT(pcms));
     }
+
+    DeviceState *bus;
+
+    /* Create one default virtio-mmio bus for q35 */
+    bus = sysbus_create_simple("virtio-mmio", 0xfed80000, pcms->gsi[14]);
+    qdev_set_parent_bus(bus, sysbus_get_default());
 }
 
 #define DEFINE_Q35_MACHINE(suffix, name, compatfn, optionfn) \
