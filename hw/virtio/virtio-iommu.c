@@ -196,6 +196,8 @@ static int virtio_iommu_map(VirtIOIOMMU *s,
     interval->low = virt_addr;
     interval->high = virt_addr + size - 1;
 
+    trace_virtio_iommu_map(asid, phys_addr, virt_addr, size, flags);
+
     as = g_tree_lookup(s->address_spaces, GUINT_TO_POINTER(asid));
     if (!as) {
         return VIRTIO_IOMMU_S_INVAL;
@@ -206,8 +208,6 @@ static int virtio_iommu_map(VirtIOIOMMU *s,
         g_free(interval);
         return VIRTIO_IOMMU_S_INVAL;
     }
-
-    trace_virtio_iommu_map(asid, phys_addr, virt_addr, size, flags);
 
     mapping = g_malloc0(sizeof(*mapping));
     mapping->virt_addr = virt_addr;
@@ -364,11 +364,13 @@ static void virtio_iommu_handle_command(VirtIODevice *vdev, VirtQueue *vq)
     for (;;) {
         elem = virtqueue_pop(vq, sizeof(VirtQueueElement));
         if (!elem) {
+            trace_virtio_iommu_handle_cmd_err("virtqueue_pop()");
             return;
         }
 
         if (iov_size(elem->in_sg, elem->in_num) < sizeof(tail) ||
             iov_size(elem->out_sg, elem->out_num) < sizeof(head)) {
+            trace_virtio_iommu_handle_cmd_err("size incorrect");
             virtio_error(vdev, "virtio-iommu erroneous head or tail");
             virtqueue_detach_element(vq, elem, 0);
             g_free(elem);
@@ -399,6 +401,8 @@ static void virtio_iommu_handle_command(VirtIODevice *vdev, VirtQueue *vq)
             tail.status = VIRTIO_IOMMU_S_UNSUPP;
         }
         qemu_mutex_unlock(&s->mutex);
+
+        trace_virtio_iommu_handle_cmd(head.type, tail.status);
 
         sz = iov_from_buf(elem->in_sg, elem->in_num, 0,
                           &tail, sizeof(tail));
@@ -439,7 +443,7 @@ static IOMMUTLBEntry virtio_iommu_translate(MemoryRegion *mr, hwaddr addr,
     dev = g_tree_lookup(s->devices, GUINT_TO_POINTER(sid));
     if (!dev) {
         /* device cannot be attached to another as */
-        printf("%s sid=%d is not known!!\n", __func__, sid);
+        trace_virtio_iommu_translate_err_sid(sid);
         goto unlock;
     }
 
