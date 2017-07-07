@@ -435,6 +435,11 @@ static IOMMUTLBEntry virtio_iommu_translate(MemoryRegion *mr, hwaddr addr,
         .perm = 3,
     };
 
+    /* Skip all the MSIs for x86 */
+    if (addr >= 0xfee00000 && addr <= 0xfeefffff) {
+        return entry;
+    }
+
     sid = smmu_get_sid(sdev);
 
     trace_virtio_iommu_translate(mr->name, sid, addr, flag);
