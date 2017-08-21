@@ -556,7 +556,8 @@ following example objects:
 
 Usage: { 'command': STRING, '*data': COMPLEX-TYPE-NAME-OR-DICT,
          '*returns': TYPE-NAME, '*boxed': true,
-         '*gen': false, '*success-response': false }
+         '*gen': false, '*success-response': false,
+         '*need-bql': true }
 
 Commands are defined by using a dictionary containing several members,
 where three members are most common.  The 'command' member is a
@@ -636,6 +637,15 @@ possible, the command expression should include the optional key
 'success-response' with boolean value false.  So far, only QGA makes
 use of this member.
 
+Most of the commands require the Big QEMU Lock (BQL) be held during
+execution.  However, there is a small subset of the commands that may
+not really need BQL at all.  To mark out this kind of commands, we can
+specify "need-bql" to "false".  This parameter is only a hint for
+internal QMP implementation to provide possiblility to allow commands
+be run in parallel, or reduce the contention of the lock.  Commands
+that have "need-bql" cleared may be called without the bql being
+taken.  They must not take the bql or any other lock that may become
+dependent on the bql.
 
 === Events ===
 
