@@ -125,6 +125,8 @@ typedef struct mon_cmd_t {
     const char *args_type;
     const char *params;
     const char *help;
+    /* Whether this command can be run without taking BQL? */
+    bool no_bql;
     void (*cmd)(Monitor *mon, const QDict *qdict);
     /* @sub_table is a list of 2nd level of commands. If it does not exist,
      * cmd should be used. If it exists, sub_table[?].cmd should be
@@ -3154,6 +3156,14 @@ static void handle_hmp_command(Monitor *mon, const char *cmdline)
         return;
     }
 
+    if (cmd->no_bql) {
+        /*
+         * This is similar to QMP's "without-bql".  See comments in
+         * do_qmp_dispatch().
+         */
+        take_bql = false;
+    }
+
     if (take_bql) {
         qemu_mutex_lock_iothread();
     }
@@ -3764,6 +3774,16 @@ static bool monitor_find_completion_for_cmd(Monitor *mon,
      * many command completion routines assumes under BQL protection.
      */
     take_bql = !qemu_mutex_iothread_locked();
+
+    /*
+     * If the command is specified "without-bql", we don't even take
+     * BQL for the completion routine.  Anyone who moves a command
+     * into BQL-free list should be responsible for its corresponding
+     * completion function as well.
+     */
+    if (cmd->no_bql) {
+        take_bql = false;
+    }
 
     if (take_bql) {
         qemu_mutex_lock_iothread();
