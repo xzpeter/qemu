@@ -3134,6 +3134,11 @@ static void handle_hmp_command(Monitor *mon, const char *cmdline)
 {
     QDict *qdict;
     const mon_cmd_t *cmd;
+    /*
+     * If we haven't take the BQL (when called by per-monitor
+     * threads), we need to take care of the BQL on our own.
+     */
+    bool take_bql = !qemu_mutex_iothread_locked();
 
     trace_handle_hmp_command(mon, cmdline);
 
@@ -3149,7 +3154,16 @@ static void handle_hmp_command(Monitor *mon, const char *cmdline)
         return;
     }
 
+    if (take_bql) {
+        qemu_mutex_lock_iothread();
+    }
+
     cmd->cmd(mon, qdict);
+
+    if (take_bql) {
+        qemu_mutex_unlock_iothread();
+    }
+
     QDECREF(qdict);
 }
 
