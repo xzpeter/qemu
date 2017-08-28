@@ -3743,6 +3743,42 @@ void loadvm_completion(ReadLineState *rs, int nb_args, const char *str)
     }
 }
 
+/*
+ * Returns true if the completion is handled by command specific
+ * completion routine, otherwise returns false.
+ */
+static bool monitor_find_completion_for_cmd(Monitor *mon,
+                                            const mon_cmd_t *cmd,
+                                            int nb_args,
+                                            const char *arg)
+{
+    bool take_bql;
+
+    if (!cmd->command_completion) {
+        return false;
+    }
+
+    /*
+     * If we haven't take the BQL (when called by per-monitor
+     * threads), we need to take care of the BQL on our own, since
+     * many command completion routines assumes under BQL protection.
+     */
+    take_bql = !qemu_mutex_iothread_locked();
+
+    if (take_bql) {
+        qemu_mutex_lock_iothread();
+    }
+
+    cmd->command_completion(mon->rs, nb_args, arg);
+
+    if (take_bql) {
+        qemu_mutex_unlock_iothread();
+    }
+
+    /* Completion handled. */
+    return true;
+}
+
 static void monitor_find_completion_by_table(Monitor *mon,
                                              const mon_cmd_t *cmd_table,
                                              char **args,
@@ -3781,8 +3817,10 @@ static void monitor_find_completion_by_table(Monitor *mon,
                                              &args[1], nb_args - 1);
             return;
         }
-        if (cmd->command_completion) {
-            cmd->command_completion(mon->rs, nb_args, args[nb_args - 1]);
+
+        /* Command specific completion routine */
+        if (monitor_find_completion_for_cmd(mon, cmd, nb_args,
+                                            args[nb_args - 1])) {
             return;
         }
 
