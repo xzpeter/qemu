@@ -163,6 +163,23 @@ static void test_qmp_protocol(void)
         QDECREF(resp);
     }
 
+    /*
+     * First send a command that takes time, then quickly send another
+     * fault one.  We should receive the good command return first,
+     * then the error message.
+     */
+    qtest_async_qmp(qts, "{ 'execute': 'x-oob-test', 'arguments': "
+                         "    { 'cmd': 'sleep-20ms' }, 'id': 1 }");
+    /* Note: "execut" is intended here to trigger a very early error */
+    qtest_async_qmp(qts, "{ 'execut': 'a-bad-command', 'id': 2 }");
+    resp = qtest_qmp_receive(qts);
+    g_assert(qdict_haskey(resp, "id"));
+    g_assert(qdict_get_int(resp, "id") == 1);
+    QDECREF(resp);
+    resp = qtest_qmp_receive(qts);
+    g_assert(qdict_haskey(resp, "error"));
+    QDECREF(resp);
+
     qtest_quit(qts);
 }
 
