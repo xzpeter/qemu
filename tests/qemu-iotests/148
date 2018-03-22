@@ -70,7 +70,11 @@ sector = "%d"
 
     def do_check_event(self, node, sector = 0):
         if node == None:
-            self.assertEqual(self.vm.get_qmp_event(), None)
+            event = self.vm.get_qmp_event()
+            # Ignore possible first RESUME message
+            if event and event['event'] == 'RESUME':
+                event = self.vm.get_qmp_event()
+            self.assertEqual(event, None)
             return
 
         for event in self.vm.get_qmp_events(wait=True):
