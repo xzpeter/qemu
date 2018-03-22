@@ -209,10 +209,10 @@ static void test_qmp_oob(void)
      * both commands.
      */
     qmp_async("{ 'execute': 'x-oob-test',"
-              "  'arguments': { 'lock': true }, "
+              "  'arguments': { 'cmd': 'lock' }, "
               "  'id': 'lock-cmd'}");
     qmp_async("{ 'execute': 'x-oob-test', "
-              "  'arguments': { 'lock': false }, "
+              "  'arguments': { 'cmd': 'unlock' }, "
               "  'control': { 'run-oob': true }, "
               "  'id': 'unlock-cmd' }");
 
@@ -220,6 +220,7 @@ static void test_qmp_oob(void)
     while (acks < 2) {
         resp = qmp_receive();
         cmd_id = qdict_get_str(resp, "id");
+        g_assert(!qdict_haskey(resp, "error"));
         if (!g_strcmp0(cmd_id, "lock-cmd") ||
             !g_strcmp0(cmd_id, "unlock-cmd")) {
             acks++;

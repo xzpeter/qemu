@@ -3433,19 +3433,29 @@
   'data': { 'id': 'any', 'reason': 'CommandDropReason' } }
 
 ##
+# @OOBTestCommand:
+#
+# @lock: lock the QMP dispatcher, until another "unlock" is received
+#
+# @unlock: unlock the QMP dispatcher that was locked.
+#
+# Since: 2.12
+##
+{ 'enum': 'OOBTestCommand',
+  'data': [ 'lock', 'unlock' ] }
+
+##
 # @x-oob-test:
 #
-# Test OOB functionality.  When sending this command with lock=true,
-# it'll try to hang the dispatcher.  When sending it with lock=false,
-# it'll try to notify the locked thread to continue.  Note: it should
-# only be used by QMP test program rather than anything else.
+# Utilities to test OOB functionality.  Note: it should only be used
+# by QMP test program rather than anything else.
 #
 # Since: 2.12
 #
 # Example:
 #
 # { "execute": "x-oob-test",
-#   "arguments": { "lock": true } }
+#   "arguments": { "cmd": "lock" } }
 ##
-{ 'command': 'x-oob-test', 'data' : { 'lock': 'bool' },
+{ 'command': 'x-oob-test', 'data' : { 'cmd': 'OOBTestCommand' },
   'allow-oob': true }

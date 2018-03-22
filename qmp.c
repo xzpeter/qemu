@@ -773,11 +773,18 @@ static void __attribute__((constructor)) x_oob_test_init(void)
     qemu_sem_init(&x_oob_test_sem, 0);
 }
 
-void qmp_x_oob_test(bool lock, Error **errp)
+void qmp_x_oob_test(OOBTestCommand cmd, Error **errp)
 {
-    if (lock) {
+    switch (cmd) {
+    case OOB_TEST_COMMAND_LOCK:
         qemu_sem_wait(&x_oob_test_sem);
-    } else {
+        break;
+    case OOB_TEST_COMMAND_UNLOCK:
         qemu_sem_post(&x_oob_test_sem);
+        break;
+    default:
+        error_setg(errp, "OOB test command '%s' not supported",
+                   OOBTestCommand_str(cmd));
+        break;
     }
 }
