@@ -23,7 +23,6 @@ read 65536/65536 bytes at offset 0
 
 === Do some I/O on the destination ===
 
-{"timestamp": {"seconds":  TIMESTAMP, "microseconds":  TIMESTAMP}, "event": "RESUME"}
 {"return": {"status": "running", "singlestep": false, "running": true}}
 read 65536/65536 bytes at offset 0
 64 KiB, X ops; XX:XX:XX.X (XXX YYY/sec and XXX ops/sec)
