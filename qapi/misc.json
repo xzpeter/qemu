@@ -3439,10 +3439,12 @@
 #
 # @unlock: unlock the QMP dispatcher that was locked.
 #
+# @sleep-20ms: stuck for a specific amount of time.
+#
 # Since: 2.12
 ##
 { 'enum': 'OOBTestCommand',
-  'data': [ 'lock', 'unlock' ] }
+  'data': [ 'lock', 'unlock', 'sleep-20ms' ] }
 
 ##
 # @x-oob-test:

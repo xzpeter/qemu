@@ -782,6 +782,9 @@ void qmp_x_oob_test(OOBTestCommand cmd, Error **errp)
     case OOB_TEST_COMMAND_UNLOCK:
         qemu_sem_post(&x_oob_test_sem);
         break;
+    case OOB_TEST_COMMAND_SLEEP_20MS:
+        usleep(20 * 1000);
+        break;
     default:
         error_setg(errp, "OOB test command '%s' not supported",
                    OOBTestCommand_str(cmd));
