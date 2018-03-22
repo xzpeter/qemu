@@ -479,6 +479,7 @@ class QMPTestCase(unittest.TestCase):
                     if check_offset:
                         self.assert_qmp(event, 'data/offset', event['data']['len'])
                     completed = True
+                    break
 
         self.assert_no_active_block_jobs()
         return event
