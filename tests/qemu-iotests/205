@@ -86,6 +86,14 @@ class TestNbdServerRemove(iotests.QMPTestCase):
         args = ('-r', '-f', 'raw', '-c', 'read 0 512', nbd_uri)
         self.assertReadOk(qemu_io(*args))
 
+        # TODO: we should query to make sure that all the clients have
+        # disconnected from the NBD server otherwise below
+        # remove_export() might fail.  It'll require something like
+        # "query-nbd-server", however we don't have that.  For now,
+        # let's do the sleep to make sure it happens, but in the
+        # future we should replace it with something more robust.
+        time.sleep(0.5)
+
         result = self.remove_export('exp', mode)
         self.assert_qmp(result, 'return', {})
 
