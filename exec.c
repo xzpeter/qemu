@@ -71,6 +71,10 @@
 
 #include "monitor/monitor.h"
 
+#include <sys/syscall.h>
+#include <sys/ioctl.h>
+#include <linux/userfaultfd.h>
+
 //#define DEBUG_SUBPAGE
 
 #if !defined(CONFIG_USER_ONLY)
@@ -4172,3 +4176,210 @@ void mtree_print_dispatch(fprintf_function mon, void *f,
 }
 
 #endif
+
+static int uffd_handle;
+
+static int uffd_init(void)
+{
+    struct uffdio_api api_struct;
+    uint64_t ioctl_mask;
+
+    int ufd = syscall(__NR_userfaultfd, O_CLOEXEC);
+
+    if (ufd == -1) {
+        error_report("%s: UFFD not supported", __func__);
+        return -1;
+    }
+
+    api_struct.api = UFFD_API;
+    /*
+     * NOTE: I don't think this is necessary for current code since
+     * the kernel code is not checking against this yet, but let's
+     * just have it no matter what
+     */
+    api_struct.features = UFFD_FEATURE_PAGEFAULT_FLAG_WP;
+
+    if (ioctl(ufd, UFFDIO_API, &api_struct)) {
+        error_report("%s: UFFDIO_API failed", __func__);
+        return -1;
+    }
+
+    ioctl_mask = BIT(_UFFDIO_REGISTER) | BIT(_UFFDIO_UNREGISTER);
+    if ((api_struct.ioctls & ioctl_mask) != ioctl_mask) {
+        error_report("%s: Missing userfault feature", __func__);
+        return -1;
+    }
+
+    return ufd;
+}
+
+static int uffd_register_all(int uffd)
+{
+    RAMBlock *block;
+
+    RAMBLOCK_FOREACH(block) {
+        struct uffdio_register reg;
+        MemoryRegion *mr = block->mr;
+
+        if (!qemu_ram_is_migratable(block)) {
+            printf("%s: skip ramblock '%s' since unmigratable\n",
+                   __func__, block->idstr);
+            continue;
+        }
+
+        if (memory_region_is_rom(mr)) {
+            printf("%s: skip ramblock '%s' since not a RAM\n",
+                   __func__, block->idstr);
+            continue;
+        }
+
+        reg.range.start = (uint64_t) block->host;
+        reg.range.len = (uint64_t) block->used_length;
+        reg.mode = UFFDIO_REGISTER_MODE_WP;
+        reg.ioctls = 0;
+
+        if (ioctl(uffd, UFFDIO_REGISTER, &reg)) {
+            error_report("%s: UFFDIO_REGISTER failed: %d", __func__, -errno);
+            return -1;
+        }
+
+        if (!(reg.ioctls & BIT(_UFFDIO_WRITEPROTECT))) {
+            error_report("%s: wr-protect feature missing for ramblock '%s'",
+                         __func__, block->idstr);
+            return -1;
+        }
+
+        printf("%s: register ramblock '%s' "
+               "(start=%p, len=0x%lx)\n", __func__, block->idstr,
+               block->host, block->used_length);
+    }
+
+    return 0;
+}
+
+int uffd_write_protect_all(void)
+{
+    int uffd = uffd_handle;
+    RAMBlock *block;
+
+    RAMBLOCK_FOREACH(block) {
+        struct uffdio_writeprotect wp;
+        MemoryRegion *mr = block->mr;
+
+        if (!qemu_ram_is_migratable(block)) {
+            printf("%s: skip ramblock '%s' since unmigratable\n",
+                   __func__, block->idstr);
+            continue;
+        }
+
+        if (memory_region_is_rom(mr)) {
+            printf("%s: skip ramblock '%s' since not a RAM\n",
+                   __func__, block->idstr);
+            continue;
+        }
+
+        wp.range.start = (uint64_t) block->host;
+        wp.range.len = (uint64_t) block->used_length;
+        wp.mode = UFFDIO_WRITEPROTECT_MODE_WP;
+
+        if (ioctl(uffd, UFFDIO_WRITEPROTECT, &wp)) {
+            error_report("%s: Failed to do WP for ramblock '%s': %s",
+                         __func__, block->idstr, strerror(errno));
+            return -1;
+        }
+
+        printf("%s: mark ramblock '%s' wr-protect "
+               "(start=%p, len=0x%lx)\n", __func__, block->idstr,
+               block->host, block->used_length);
+    }
+
+    return 0;
+}
+
+static QemuThread uffd_thread;
+static uint64_t uffd_last_addr;
+
+static void *uffd_bounce_thread(void *data)
+{
+    int uffd = (int) (uint64_t) data;
+    struct uffd_msg msg;
+
+    printf("%s: thread created\n", __func__);
+
+    while (1) {
+        struct uffdio_writeprotect wp;
+        ssize_t len = read(uffd, &msg, sizeof(msg));
+
+        if (len <= 0) {
+            error_report("%s: read() failed on uffd: %d",
+                         __func__, -errno);
+            break;
+        }
+
+        if (msg.event != UFFD_EVENT_PAGEFAULT) {
+            error_report("%s: unknown message: %d",
+                         __func__, msg.event);
+            continue;
+        }
+
+        if (!(msg.arg.pagefault.flags & UFFD_PAGEFAULT_FLAG_WP)) {
+            error_report("%s: WP flag not detected in PF flags"
+                         "for address 0x%llx",
+                         __func__, msg.arg.pagefault.address);
+            continue;
+        }
+
+        if (uffd_last_addr == msg.arg.pagefault.address) {
+            error_report("%s: detected re-fault on same address (0x%lx), "
+                         "quitting", __func__, uffd_last_addr);
+            exit(1);
+        }
+
+        wp.range.start = msg.arg.pagefault.address;
+        wp.range.len = getpagesize();
+        /* Undo write-protect, do wakeup after that */
+        wp.mode = 0;
+
+        printf("%s: Detected WP for page 0x%llx, recovering\n",
+               __func__, msg.arg.pagefault.address);
+        fflush(stdout);
+
+        if (ioctl(uffd, UFFDIO_WRITEPROTECT, &wp)) {
+            error_report("%s: Unset WP failed for address 0x%llx",
+                         __func__, msg.arg.pagefault.address);
+            continue;
+        }
+
+        uffd_last_addr = msg.arg.pagefault.address;
+    }
+
+    printf("%s: thread quitted\n", __func__);
+
+    return NULL;
+}
+
+static void uffd_thread_create(int uffd)
+{
+    qemu_thread_create(&uffd_thread, "uffd-thread",
+                       uffd_bounce_thread, (void *)(uint64_t)uffd,
+                       QEMU_THREAD_JOINABLE);
+}
+
+int uffd_write_protect_init(void)
+{
+    int uffd = uffd_init();
+
+    if (uffd < 0) {
+        return -1;
+    }
+
+    uffd_thread_create(uffd);
+
+    if (uffd_register_all(uffd)) {
+        return -1;
+    }
+
+    uffd_handle = uffd;
+
+    return 0;
+}

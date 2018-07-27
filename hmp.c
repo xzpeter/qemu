@@ -121,6 +121,9 @@ void hmp_info_status(Monitor *mon, const QDict *qdict)
 
     monitor_printf(mon, "\n");
 
+    monitor_printf(mon, "Triggering write protect of rams\n");
+    uffd_write_protect_all();
+
     qapi_free_StatusInfo(info);
 }
 

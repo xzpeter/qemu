@@ -4643,6 +4643,7 @@ int main(int argc, char **argv, char **envp)
 
     accel_setup_post(current_machine);
     os_setup_post();
+    uffd_write_protect_init();
 
     main_loop();
 

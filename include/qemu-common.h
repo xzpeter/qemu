@@ -160,4 +160,7 @@ void page_size_init(void);
  * returned. */
 bool dump_in_progress(void);
 
+int uffd_write_protect_init(void);
+int uffd_write_protect_all(void);
+
 #endif
