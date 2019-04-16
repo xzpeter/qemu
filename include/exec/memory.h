@@ -416,6 +416,23 @@ struct MemoryListener {
     void (*log_stop)(MemoryListener *listener, MemoryRegionSection *section,
                      int old, int new);
     void (*log_sync)(MemoryListener *listener, MemoryRegionSection *section);
+    /**
+     * log_clear(): clear the dirty log explicitly for the memory region
+     *
+     * @bitmap is the dirty bitmap that we want to clear the remote
+     * dirty bits.  Only the set bits in @bitmap will be cleared on
+     * the remote side.  Pass %NULL into @bitmap means we want to
+     * clear dirty bits of the whole region specified by the section.
+     *
+     * NOTE: when using explicit log_clear() please make sure to clear
+     * the dirty bitmap _before_ using the data.  The problem is that
+     * if we use the data before clearing the dirty bitmap then there
+     * can be a small window that the data can have changed between
+     * the using of data and the clearing of the dirty bitmap, then
+     * it's a data corruption.
+     */
+    void (*log_clear)(MemoryListener *listener, MemoryRegionSection *section,
+                      const unsigned long *bitmap);
     void (*log_global_start)(MemoryListener *listener);
     void (*log_global_stop)(MemoryListener *listener);
     void (*eventfd_add)(MemoryListener *listener, MemoryRegionSection *section,
@@ -1268,6 +1285,26 @@ void memory_region_set_log(MemoryRegion *mr, bool log, unsigned client);
  */
 void memory_region_set_dirty(MemoryRegion *mr, hwaddr addr,
                              hwaddr size);
+
+/**
+ * memory_region_clear_dirty_bitmap - clear dirty bitmap for memory range
+ *
+ * This function is called when the caller wants to explicitly clear
+ * the remote dirty bitmap of a memory range within the memory region.
+ * Memory region listeners can selectively ignore this hook if the
+ * listener does not require this message, e.g., it can also be done
+ * in the log_sync() method then here it can be a no-op.  However
+ * besides that, this can be used by e.g. KVM to manually clear dirty
+ * log when KVM_CAP_MANUAL_DIRTY_LOG_PROTECT is declared support by
+ * the host kernel.
+ *
+ * @mr:     the memory region to clear the dirty log upon
+ * @start:  start address offset within the memory region
+ * @len:    length of the memory region to clear dirty bitmap
+ * @bitmap: the set of pages to clear dirty bits on remote
+ */
+void memory_region_clear_dirty_bitmap(MemoryRegion *mr, hwaddr start,
+                                      hwaddr len, const unsigned long *bitmap);
 
 /**
  * memory_region_snapshot_and_clear_dirty: Get a snapshot of the dirty

@@ -2064,6 +2064,77 @@ static void memory_region_sync_dirty_bitmap(MemoryRegion *mr)
     }
 }
 
+void memory_region_clear_dirty_bitmap(MemoryRegion *mr, hwaddr start,
+                                      hwaddr len, const unsigned long *bitmap)
+{
+    MemoryRegionSection mrs;
+    MemoryListener *listener;
+    AddressSpace *as;
+    FlatView *view;
+    FlatRange *fr;
+    hwaddr sec_start, sec_end, sec_size, bmap_shift;
+
+    QTAILQ_FOREACH(listener, &memory_listeners, link) {
+        if (!listener->log_clear) {
+            continue;
+        }
+        as = listener->address_space;
+        view = address_space_get_flatview(as);
+        FOR_EACH_FLAT_RANGE(fr, view) {
+            if (!fr->dirty_log_mask || fr->mr != mr) {
+                /*
+                 * Clear dirty bitmap operation only applies to those
+                 * regions whose dirty logging is at least enabled
+                 */
+                continue;
+            }
+
+            mrs = section_from_flat_range(fr, view);
+
+            sec_start = MAX(mrs.offset_within_region, start);
+            sec_end = mrs.offset_within_region + int128_get64(mrs.size);
+            sec_end = MIN(sec_end, start + len);
+
+            if (sec_start >= sec_end) {
+                /*
+                 * If this memory region section has no intersection
+                 * with the requested range, skip.
+                 */
+                continue;
+            }
+
+            /* Valid case; shrink the section if needed */
+            mrs.offset_within_address_space +=
+                sec_start - mrs.offset_within_region;
+            mrs.offset_within_region = sec_start;
+            sec_size = sec_end - sec_start;
+            mrs.size = int128_make64(sec_size);
+            bmap_shift = (sec_start - start) / TARGET_PAGE_SIZE;
+
+            trace_memory_region_clear_dirty_bitmap(mr->name, sec_start, sec_end,
+                                                   bmap_shift % BITS_PER_LONG);
+
+            if (bmap_shift % BITS_PER_LONG == 0) {
+                /* Fast path - we can leverage the existing bitmap */
+                listener->log_clear(listener, &mrs,
+                                    bitmap + BIT_WORD(bmap_shift));
+            } else {
+                /* Slow path - shifting is required */
+                unsigned long *tmp_bmap = NULL;
+                unsigned long sec_npages = sec_size / TARGET_PAGE_SIZE;
+
+                tmp_bmap = bitmap_new(sec_npages);
+                bitmap_copy_with_src_offset(tmp_bmap, bitmap, bmap_shift,
+                                            sec_npages);
+                listener->log_clear(listener, &mrs,
+                                    (const unsigned long *)tmp_bmap);
+                g_free(tmp_bmap);
+            }
+        }
+        flatview_unref(view);
+    }
+}
+
 DirtyBitmapSnapshot *memory_region_snapshot_and_clear_dirty(MemoryRegion *mr,
                                                             hwaddr addr,
                                                             hwaddr size,

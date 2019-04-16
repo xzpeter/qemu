@@ -441,6 +441,10 @@ uint64_t cpu_physical_memory_sync_dirty_bitmap(RAMBlock *rb,
         unsigned long offset = BIT_WORD((word * BITS_PER_LONG) %
                                         DIRTY_MEMORY_BLOCK_SIZE);
         unsigned long page = BIT_WORD(start >> TARGET_PAGE_BITS);
+        unsigned long *tmp_bmap;
+        MemoryRegion *mr = rb->mr;
+
+        tmp_bmap = bitmap_new(length >> TARGET_PAGE_BITS);
 
         src = atomic_rcu_read(
                 &ram_list.dirty_memory[DIRTY_MEMORY_MIGRATION])->blocks;
@@ -451,6 +455,7 @@ uint64_t cpu_physical_memory_sync_dirty_bitmap(RAMBlock *rb,
                 unsigned long new_dirty;
                 *real_dirty_pages += ctpopl(bits);
                 new_dirty = ~dest[k];
+                tmp_bmap[k - page] = bits;
                 dest[k] |= bits;
                 new_dirty &= bits;
                 num_dirty += ctpopl(new_dirty);
@@ -461,6 +466,10 @@ uint64_t cpu_physical_memory_sync_dirty_bitmap(RAMBlock *rb,
                 idx++;
             }
         }
+
+        /* TODO: split the huge bitmap into smaller chunks */
+        memory_region_clear_dirty_bitmap(mr, start, length, tmp_bmap);
+        g_free(tmp_bmap);
     } else {
         ram_addr_t offset = rb->offset;
 

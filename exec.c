@@ -1355,6 +1355,8 @@ bool cpu_physical_memory_test_and_clear_dirty(ram_addr_t start,
     DirtyMemoryBlocks *blocks;
     unsigned long end, page;
     bool dirty = false;
+    RAMBlock *ramblock;
+    unsigned long *tmp_bmap;
 
     if (length == 0) {
         return false;
@@ -1363,17 +1365,30 @@ bool cpu_physical_memory_test_and_clear_dirty(ram_addr_t start,
     end = TARGET_PAGE_ALIGN(start + length) >> TARGET_PAGE_BITS;
     page = start >> TARGET_PAGE_BITS;
 
+    /* This is big enough */
+    tmp_bmap = bitmap_new(DIRTY_MEMORY_BLOCK_SIZE);
+
     rcu_read_lock();
 
     blocks = atomic_rcu_read(&ram_list.dirty_memory[client]);
+    ramblock = qemu_get_ram_block(start);
+    /* Range sanity check on the ramblock */
+    assert(start >= ramblock->offset &&
+           start + length <= ramblock->offset + ramblock->used_length);
 
     while (page < end) {
         unsigned long idx = page / DIRTY_MEMORY_BLOCK_SIZE;
         unsigned long offset = page % DIRTY_MEMORY_BLOCK_SIZE;
         unsigned long num = MIN(end - page, DIRTY_MEMORY_BLOCK_SIZE - offset);
+        uint64_t mr_offset;
 
-        dirty |= bitmap_test_and_clear_atomic(blocks->blocks[idx],
-                                              offset, num);
+        bitmap_copy_and_clear_with_offset_atomic(tmp_bmap,
+                                                 blocks->blocks[idx],
+                                                 offset, num);
+        dirty |= bitmap_test(tmp_bmap, num);
+        mr_offset = (ram_addr_t)(page << TARGET_PAGE_BITS) - ramblock->offset;
+        memory_region_clear_dirty_bitmap(ramblock->mr, mr_offset,
+                                         num << TARGET_PAGE_BITS, tmp_bmap);
         page += num;
     }
 
@@ -1382,6 +1397,8 @@ bool cpu_physical_memory_test_and_clear_dirty(ram_addr_t start,
     if (dirty && tcg_enabled()) {
         tlb_reset_dirty_range_all(start, length);
     }
+
+    g_free(tmp_bmap);
 
     return dirty;
 }
@@ -1431,6 +1448,12 @@ DirtyBitmapSnapshot *cpu_physical_memory_snapshot_and_clear_dirty
     if (tcg_enabled()) {
         tlb_reset_dirty_range_all(start, length);
     }
+
+    /*
+     * We've just took snapshot into snap->dirty, so that is exactly
+     * the set of pages that we want to clear the dirty bits
+     */
+    memory_region_clear_dirty_bitmap(mr, addr, length, snap->dirty);
 
     return snap;
 }
