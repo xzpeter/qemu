@@ -41,6 +41,8 @@
  * bitmap_find_next_zero_area(buf, len, pos, n, mask)	Find bit free area
  * bitmap_to_le(dst, src, nbits)      Convert bitmap to little endian
  * bitmap_from_le(dst, src, nbits)    Convert bitmap from little endian
+ * bitmap_copy_with_offset(dst, src, offset, nbits)
+ *                                    *dst = *src (with an offset upon src)
  */
 
 /*
@@ -270,5 +272,8 @@ void bitmap_to_le(unsigned long *dst, const unsigned long *src,
                   long nbits);
 void bitmap_from_le(unsigned long *dst, const unsigned long *src,
                     long nbits);
+
+void bitmap_copy_with_offset(unsigned long *dst, const unsigned long *src,
+                             long offset, long nbits);
 
 #endif /* BITMAP_H */

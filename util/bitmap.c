@@ -402,3 +402,41 @@ void bitmap_to_le(unsigned long *dst, const unsigned long *src,
 {
     bitmap_to_from_le(dst, src, nbits);
 }
+
+/*
+ * Copy "src" bitmap with a positive offset and put it into the "dst"
+ * bitmap.  The caller needs to make sure the bitmap size of "src"
+ * is bigger than (shift + nbits).
+ */
+void bitmap_copy_with_offset(unsigned long *dst, const unsigned long *src,
+                             long shift, long nbits)
+{
+    unsigned long left_mask, right_mask, last_mask;
+
+    assert(shift > 0);
+    /* Proper shift src pointer to the first word to copy from */
+    src += BIT_WORD(shift);
+    shift %= BITS_PER_LONG;
+    right_mask = (1ul << shift) - 1;
+    left_mask = ~right_mask;
+
+    while (nbits >= BITS_PER_LONG) {
+        *dst = (*src & left_mask) >> shift;
+        *dst |= (*(src + 1) & right_mask) << (BITS_PER_LONG - shift);
+        dst++;
+        src++;
+        nbits -= BITS_PER_LONG;
+    }
+
+    if (nbits >= BITS_PER_LONG - shift) {
+        *dst = (*src & left_mask) >> shift;
+        nbits -= BITS_PER_LONG - shift;
+        if (nbits) {
+            last_mask = (1 << nbits) - 1;
+            *dst |= (*(src + 1) & last_mask) << (BITS_PER_LONG - shift);
+        }
+    } else {
+        last_mask = (1 << nbits) - 1;
+        *dst = (*src >> shift) & last_mask;
+    }
+}
