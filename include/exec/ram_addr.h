@@ -50,7 +50,65 @@ struct RAMBlock {
     unsigned long *unsentmap;
     /* bitmap of already received pages in postcopy */
     unsigned long *receivedmap;
+    /*
+     * bitmap of already cleared dirty bitmap.  Set this up to
+     * non-NULL to enable the capability to postpone and split
+     * clearing of dirty bitmap on the remote node (e.g., KVM).  The
+     * bitmap will be set only when doing global sync.
+     *
+     * NOTE: this bitmap is different comparing to the other bitmaps
+     * in that one bit can represent multiple guest pages.  On
+     * destination side, this should always be NULL.
+     */
+    unsigned long *clear_bmap;
+    uint8_t clear_bmap_shift;
 };
+
+/**
+ * clear_bmap_size: calculate clear bitmap size
+ *
+ * @pages: number of guest pages
+ * @shift: guest page number shift
+ *
+ * Returns: number of bits for the clear bitmap
+ */
+static inline long clear_bmap_size(uint64_t pages, uint8_t shift)
+{
+    return DIV_ROUND_UP(pages, 1UL << shift);
+}
+
+/**
+ * clear_bmap_set: set clear bitmap for the page range
+ *
+ * @rb: the ramblock to operate on
+ * @start: the start page number
+ * @size: number of pages to set in the bitmap
+ *
+ * Returns: None
+ */
+static inline void clear_bmap_set(RAMBlock *rb, uint64_t start,
+                                  uint64_t npages)
+{
+    uint8_t shift = rb->clear_bmap_shift;
+
+    bitmap_set_atomic(rb->clear_bmap, start >> shift,
+                      clear_bmap_size(npages, shift));
+}
+
+/**
+ * clear_bmap_test_and_clear: test clear bitmap for the page, clear if set
+ *
+ * @rb: the ramblock to operate on
+ * @page: the page number to check
+ *
+ * Returns: true if the bit was set, false otherwise
+ */
+static inline bool clear_bmap_test_and_clear(RAMBlock *rb, uint64_t page)
+{
+    uint8_t shift = rb->clear_bmap_shift;
+
+    return bitmap_test_and_clear_atomic(rb->clear_bmap, page >> shift, 1);
+}
 
 static inline bool offset_in_ramblock(RAMBlock *b, ram_addr_t offset)
 {
@@ -444,7 +502,11 @@ uint64_t cpu_physical_memory_sync_dirty_bitmap(RAMBlock *rb,
         unsigned long *tmp_bmap;
         MemoryRegion *mr = rb->mr;
 
-        tmp_bmap = bitmap_new(length >> TARGET_PAGE_BITS);
+        if (!rb->clear_bmap) {
+            tmp_bmap = bitmap_new(length >> TARGET_PAGE_BITS);
+        } else {
+            tmp_bmap = NULL;
+        }
 
         src = atomic_rcu_read(
                 &ram_list.dirty_memory[DIRTY_MEMORY_MIGRATION])->blocks;
@@ -455,7 +517,9 @@ uint64_t cpu_physical_memory_sync_dirty_bitmap(RAMBlock *rb,
                 unsigned long new_dirty;
                 *real_dirty_pages += ctpopl(bits);
                 new_dirty = ~dest[k];
-                tmp_bmap[k - page] = bits;
+                if (tmp_bmap) {
+                    tmp_bmap[k - page] = bits;
+                }
                 dest[k] |= bits;
                 new_dirty &= bits;
                 num_dirty += ctpopl(new_dirty);
@@ -467,9 +531,18 @@ uint64_t cpu_physical_memory_sync_dirty_bitmap(RAMBlock *rb,
             }
         }
 
-        /* TODO: split the huge bitmap into smaller chunks */
-        memory_region_clear_dirty_bitmap(mr, start, length, tmp_bmap);
-        g_free(tmp_bmap);
+        if (rb->clear_bmap) {
+            /*
+             * Postpone the dirty bitmap clear to the point before we
+             * really send the pages
+             */
+            clear_bmap_set(rb, start >> TARGET_PAGE_BITS,
+                           length >> TARGET_PAGE_BITS);
+            assert(!tmp_bmap);
+        } else {
+            memory_region_clear_dirty_bitmap(mr, start, length, tmp_bmap);
+            g_free(tmp_bmap);
+        }
     } else {
         ram_addr_t offset = rb->offset;
 
