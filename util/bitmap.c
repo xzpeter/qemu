@@ -240,6 +240,27 @@ void bitmap_clear(unsigned long *map, long start, long nr)
     }
 }
 
+bool bitmap_test(unsigned long *src, long nr)
+{
+    unsigned long mask;
+
+    while (nr >= BITS_PER_LONG) {
+        if (*src++) {
+            return true;
+        }
+        nr -= BITS_PER_LONG;
+    }
+
+    if (nr) {
+        mask = (1 << nr) - 1;
+        if (*src & mask) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 bool bitmap_test_and_clear_atomic(unsigned long *map, long start, long nr)
 {
     unsigned long *p = map + BIT_WORD(start);
