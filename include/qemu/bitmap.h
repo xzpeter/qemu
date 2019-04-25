@@ -255,6 +255,9 @@ void bitmap_clear(unsigned long *map, long start, long nr);
 bool bitmap_test_and_clear_atomic(unsigned long *map, long start, long nr);
 void bitmap_copy_and_clear_atomic(unsigned long *dst, unsigned long *src,
                                   long nr);
+void bitmap_copy_and_clear_with_offset_atomic(unsigned long *dst,
+                                              unsigned long *src,
+                                              long shift, long nbits);
 unsigned long bitmap_find_next_zero_area(unsigned long *map,
                                          unsigned long size,
                                          unsigned long start,

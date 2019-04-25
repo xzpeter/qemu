@@ -298,6 +298,44 @@ void bitmap_copy_and_clear_atomic(unsigned long *dst, unsigned long *src,
     }
 }
 
+void bitmap_copy_and_clear_with_offset_atomic(unsigned long *dst,
+                                              unsigned long *src,
+                                              long shift, long nbits)
+{
+    unsigned long left_mask, right_mask, last_mask, tmp;
+
+    assert(shift >= 0);
+    /* Proper shift src pointer to the first word to copy from */
+    src += BIT_WORD(shift);
+    shift %= BITS_PER_LONG;
+    right_mask = (1ul << shift) - 1;
+    left_mask = ~right_mask;
+
+    /* TODO: merge two atomic_fetch_and into one atomic_xchg */
+    while (nbits >= BITS_PER_LONG) {
+        tmp = atomic_fetch_and(src, right_mask);
+        *dst = (tmp & left_mask) >> shift;
+        tmp = atomic_fetch_and(src + 1, left_mask);
+        *dst |= (tmp & right_mask) << (BITS_PER_LONG - shift);
+        dst++;
+        src++;
+        nbits -= BITS_PER_LONG;
+    }
+
+    if (nbits > BITS_PER_LONG - shift) {
+        tmp = atomic_fetch_and(src, right_mask);
+        *dst = (tmp & left_mask) >> shift;
+        nbits -= BITS_PER_LONG - shift;
+        last_mask = (1 << nbits) - 1;
+        tmp = atomic_fetch_and(src + 1, ~last_mask);
+        *dst |= (tmp & last_mask) << (BITS_PER_LONG - shift);
+    } else {
+        last_mask = (1 << nbits) - 1;
+        tmp = atomic_fetch_and(src, ~(last_mask << shift));
+        *dst = (tmp >> shift) & last_mask;
+    }
+}
+
 #define ALIGN_MASK(x,mask)      (((x)+(mask))&~(mask))
 
 /**
