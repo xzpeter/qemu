@@ -1020,7 +1020,10 @@ static void tlb_reset_dirty_range_all(ram_addr_t start, ram_addr_t length)
     }
 }
 
-/* Note: start and end must be within the same ram block.  */
+/*
+ * Note: (1) start and end must be within the same ram block; (2) the caller
+ * needs to hold ram_list.mutex lock.
+ */
 bool cpu_physical_memory_test_and_clear_dirty(ram_addr_t start,
                                               ram_addr_t length,
                                               unsigned client)
@@ -1039,8 +1042,9 @@ bool cpu_physical_memory_test_and_clear_dirty(ram_addr_t start,
     start_page = start >> TARGET_PAGE_BITS;
     page = start_page;
 
-    WITH_RCU_READ_LOCK_GUARD() {
-        blocks = qatomic_rcu_read(&ram_list.dirty_memory[client]);
+    /* TODO: drop this and reindent */
+    if (1) {
+        blocks = ram_list.dirty_memory[client];
         ramblock = qemu_get_ram_block(start);
         /* Range sanity check on the ramblock */
         assert(start >= ramblock->offset &&
@@ -1052,6 +1056,7 @@ bool cpu_physical_memory_test_and_clear_dirty(ram_addr_t start,
             unsigned long num = MIN(end - page,
                                     DIRTY_MEMORY_BLOCK_SIZE - offset);
 
+            /* TODO: replace with non-atomic version should work too */
             dirty |= bitmap_test_and_clear_atomic(blocks->blocks[idx],
                                                   offset, num);
             page += num;
@@ -1089,8 +1094,8 @@ DirtyBitmapSnapshot *cpu_physical_memory_snapshot_and_clear_dirty
     end  = last  >> TARGET_PAGE_BITS;
     dest = 0;
 
-    WITH_RCU_READ_LOCK_GUARD() {
-        blocks = qatomic_rcu_read(&ram_list.dirty_memory[client]);
+    WITH_QEMU_LOCK_GUARD(&ram_list.mutex) {
+        blocks = ram_list.dirty_memory[client];
 
         while (page < end) {
             unsigned long idx = page / DIRTY_MEMORY_BLOCK_SIZE;
@@ -1102,6 +1107,7 @@ DirtyBitmapSnapshot *cpu_physical_memory_snapshot_and_clear_dirty
             assert(QEMU_IS_ALIGNED(num,    (1 << BITS_PER_LEVEL)));
             offset >>= BITS_PER_LEVEL;
 
+            /* TODO: replace with non-atomic versions */
             bitmap_copy_and_clear_atomic(snap->dirty + dest,
                                          blocks->blocks[idx] + offset,
                                          num);
@@ -1934,7 +1940,7 @@ static void dirty_memory_extend(ram_addr_t old_ram_size,
         DirtyMemoryBlocks *new_blocks;
         int j;
 
-        old_blocks = qatomic_rcu_read(&ram_list.dirty_memory[i]);
+        old_blocks = ram_list.dirty_memory[i];
         new_blocks = g_malloc(sizeof(*new_blocks) +
                               sizeof(new_blocks->blocks[0]) * new_num_blocks);
 
@@ -1947,7 +1953,7 @@ static void dirty_memory_extend(ram_addr_t old_ram_size,
             new_blocks->blocks[j] = bitmap_new(DIRTY_MEMORY_BLOCK_SIZE);
         }
 
-        qatomic_rcu_set(&ram_list.dirty_memory[i], new_blocks);
+        ram_list.dirty_memory[i] = new_blocks;
 
         if (old_blocks) {
             g_free_rcu(old_blocks, rcu);

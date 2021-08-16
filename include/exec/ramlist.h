@@ -13,7 +13,10 @@ typedef struct RAMBlockNotifier RAMBlockNotifier;
 #define DIRTY_MEMORY_MIGRATION 2
 #define DIRTY_MEMORY_NUM       3        /* num of dirty bits */
 
-/* The dirty memory bitmap is split into fixed-size blocks to allow growth
+/*
+ * TODO: drop rcu, and update this comemnt.
+ *
+ * The dirty memory bitmap is split into fixed-size blocks to allow growth
  * under RCU.  The bitmap for a block can be accessed as follows:
  *
  *   rcu_read_lock();

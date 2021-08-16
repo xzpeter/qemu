@@ -993,7 +993,7 @@ static void migration_bitmap_sync(RAMState *rs)
     memory_global_dirty_log_sync();
 
     qemu_mutex_lock(&rs->bitmap_mutex);
-    WITH_RCU_READ_LOCK_GUARD() {
+    WITH_QEMU_LOCK_GUARD(&ram_list.mutex) {
         RAMBLOCK_FOREACH_NOT_IGNORED(block) {
             ramblock_sync_dirty_bitmap(rs, block);
         }
@@ -3427,7 +3427,7 @@ void colo_incoming_start_dirty_log(void)
     qemu_mutex_lock_ramlist();
 
     memory_global_dirty_log_sync();
-    WITH_RCU_READ_LOCK_GUARD() {
+    WITH_QEMU_LOCK_GUARD(&ram_list.mutex) {
         RAMBLOCK_FOREACH_NOT_IGNORED(block) {
             ramblock_sync_dirty_bitmap(ram_state, block);
             /* Discard this dirty bitmap record */
@@ -3724,7 +3724,7 @@ void colo_flush_ram_cache(void)
 
     memory_global_dirty_log_sync();
     qemu_mutex_lock(&ram_state->bitmap_mutex);
-    WITH_RCU_READ_LOCK_GUARD() {
+    WITH_QEMU_LOCK_GUARD(&ram_list.mutex) {
         RAMBLOCK_FOREACH_NOT_IGNORED(block) {
             ramblock_sync_dirty_bitmap(ram_state, block);
         }

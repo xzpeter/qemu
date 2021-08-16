@@ -25,6 +25,7 @@
 #include "sysemu/tcg.h"
 #include "exec/ramlist.h"
 #include "exec/ramblock.h"
+#include "qemu/lockable.h"
 
 /**
  * clear_bmap_size: calculate clear bitmap size
@@ -161,8 +162,8 @@ static inline bool cpu_physical_memory_get_dirty(ram_addr_t start,
     end = TARGET_PAGE_ALIGN(start + length) >> TARGET_PAGE_BITS;
     page = start >> TARGET_PAGE_BITS;
 
-    WITH_RCU_READ_LOCK_GUARD() {
-        blocks = qatomic_rcu_read(&ram_list.dirty_memory[client]);
+    WITH_QEMU_LOCK_GUARD(&ram_list.mutex) {
+        blocks = ram_list.dirty_memory[client];
 
         idx = page / DIRTY_MEMORY_BLOCK_SIZE;
         offset = page % DIRTY_MEMORY_BLOCK_SIZE;
@@ -201,9 +202,9 @@ static inline bool cpu_physical_memory_all_dirty(ram_addr_t start,
     end = TARGET_PAGE_ALIGN(start + length) >> TARGET_PAGE_BITS;
     page = start >> TARGET_PAGE_BITS;
 
-    RCU_READ_LOCK_GUARD();
+    QEMU_LOCK_GUARD(&ram_list.mutex);
 
-    blocks = qatomic_rcu_read(&ram_list.dirty_memory[client]);
+    blocks = ram_list.dirty_memory[client];
 
     idx = page / DIRTY_MEMORY_BLOCK_SIZE;
     offset = page % DIRTY_MEMORY_BLOCK_SIZE;
@@ -274,11 +275,11 @@ static inline void cpu_physical_memory_set_dirty_flag(ram_addr_t addr,
     idx = page / DIRTY_MEMORY_BLOCK_SIZE;
     offset = page % DIRTY_MEMORY_BLOCK_SIZE;
 
-    RCU_READ_LOCK_GUARD();
+    QEMU_LOCK_GUARD(&ram_list.mutex);
 
-    blocks = qatomic_rcu_read(&ram_list.dirty_memory[client]);
+    blocks = ram_list.dirty_memory[client];
 
-    set_bit_atomic(offset, blocks->blocks[idx]);
+    set_bit(offset, blocks->blocks[idx]);
 }
 
 static inline void cpu_physical_memory_set_dirty_range(ram_addr_t start,
@@ -297,9 +298,9 @@ static inline void cpu_physical_memory_set_dirty_range(ram_addr_t start,
     end = TARGET_PAGE_ALIGN(start + length) >> TARGET_PAGE_BITS;
     page = start >> TARGET_PAGE_BITS;
 
-    WITH_RCU_READ_LOCK_GUARD() {
+    WITH_QEMU_LOCK_GUARD(&ram_list.mutex) {
         for (i = 0; i < DIRTY_MEMORY_NUM; i++) {
-            blocks[i] = qatomic_rcu_read(&ram_list.dirty_memory[i]);
+            blocks[i] = ram_list.dirty_memory[i];
         }
 
         idx = page / DIRTY_MEMORY_BLOCK_SIZE;
@@ -309,16 +310,16 @@ static inline void cpu_physical_memory_set_dirty_range(ram_addr_t start,
             unsigned long next = MIN(end, base + DIRTY_MEMORY_BLOCK_SIZE);
 
             if (likely(mask & (1 << DIRTY_MEMORY_MIGRATION))) {
-                bitmap_set_atomic(blocks[DIRTY_MEMORY_MIGRATION]->blocks[idx],
-                                  offset, next - page);
+                bitmap_set(blocks[DIRTY_MEMORY_MIGRATION]->blocks[idx],
+                           offset, next - page);
             }
             if (unlikely(mask & (1 << DIRTY_MEMORY_VGA))) {
-                bitmap_set_atomic(blocks[DIRTY_MEMORY_VGA]->blocks[idx],
-                                  offset, next - page);
+                bitmap_set(blocks[DIRTY_MEMORY_VGA]->blocks[idx],
+                           offset, next - page);
             }
             if (unlikely(mask & (1 << DIRTY_MEMORY_CODE))) {
-                bitmap_set_atomic(blocks[DIRTY_MEMORY_CODE]->blocks[idx],
-                                  offset, next - page);
+                bitmap_set(blocks[DIRTY_MEMORY_CODE]->blocks[idx],
+                           offset, next - page);
             }
 
             page = next;
@@ -357,27 +358,26 @@ static inline void cpu_physical_memory_set_dirty_lebitmap(unsigned long *bitmap,
         offset = BIT_WORD((start >> TARGET_PAGE_BITS) %
                           DIRTY_MEMORY_BLOCK_SIZE);
 
-        WITH_RCU_READ_LOCK_GUARD() {
+        WITH_QEMU_LOCK_GUARD(&ram_list.mutex) {
             for (i = 0; i < DIRTY_MEMORY_NUM; i++) {
-                blocks[i] =
-                    qatomic_rcu_read(&ram_list.dirty_memory[i])->blocks;
+                blocks[i] = ram_list.dirty_memory[i]->blocks;
             }
 
             for (k = 0; k < nr; k++) {
                 if (bitmap[k]) {
                     unsigned long temp = leul_to_cpu(bitmap[k]);
+                    unsigned long *bmap = &blocks[DIRTY_MEMORY_VGA][idx][offset];
 
-                    qatomic_or(&blocks[DIRTY_MEMORY_VGA][idx][offset], temp);
+                    bitmap_or(bmap, bmap, &temp, BITS_PER_LONG);
 
                     if (global_dirty_log) {
-                        qatomic_or(
-                                &blocks[DIRTY_MEMORY_MIGRATION][idx][offset],
-                                temp);
+                        bmap = &blocks[DIRTY_MEMORY_MIGRATION][idx][offset];
+                        bitmap_or(bmap, bmap, &temp, BITS_PER_LONG);
                     }
 
                     if (tcg_enabled()) {
-                        qatomic_or(&blocks[DIRTY_MEMORY_CODE][idx][offset],
-                                   temp);
+                        bmap = &blocks[DIRTY_MEMORY_CODE][idx][offset];
+                        bitmap_or(bmap, bmap, &temp, BITS_PER_LONG);
                     }
                 }
 
@@ -432,13 +432,14 @@ bool cpu_physical_memory_snapshot_get_dirty(DirtyBitmapSnapshot *snap,
 static inline void cpu_physical_memory_clear_dirty_range(ram_addr_t start,
                                                          ram_addr_t length)
 {
+    QEMU_LOCK_GUARD(&ram_list.mutex);
     cpu_physical_memory_test_and_clear_dirty(start, length, DIRTY_MEMORY_MIGRATION);
     cpu_physical_memory_test_and_clear_dirty(start, length, DIRTY_MEMORY_VGA);
     cpu_physical_memory_test_and_clear_dirty(start, length, DIRTY_MEMORY_CODE);
 }
 
 
-/* Called with RCU critical section */
+/* Called with ram_list.mutex held */
 static inline
 uint64_t cpu_physical_memory_sync_dirty_bitmap(RAMBlock *rb,
                                                ram_addr_t start,
@@ -461,8 +462,7 @@ uint64_t cpu_physical_memory_sync_dirty_bitmap(RAMBlock *rb,
                                         DIRTY_MEMORY_BLOCK_SIZE);
         unsigned long page = BIT_WORD(start >> TARGET_PAGE_BITS);
 
-        src = qatomic_rcu_read(
-                &ram_list.dirty_memory[DIRTY_MEMORY_MIGRATION])->blocks;
+        src = ram_list.dirty_memory[DIRTY_MEMORY_MIGRATION]->blocks;
 
         for (k = page; k < page + nr; k++) {
             if (src[idx][offset]) {
