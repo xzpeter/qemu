@@ -2729,6 +2729,10 @@ AddressSpace *pci_device_iommu_address_space(PCIDevice *dev)
     PCIBus *iommu_bus = bus;
     uint8_t devfn = dev->devfn;
 
+    if (!dev->address_space_consumed) {
+        dev->address_space_consumed = true;
+    }
+
     while (iommu_bus && !iommu_bus->iommu_fn && iommu_bus->parent_dev) {
         PCIBus *parent_bus = pci_get_bus(iommu_bus->parent_dev);
 

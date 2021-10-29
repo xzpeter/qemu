@@ -268,6 +268,13 @@ typedef struct PCIReqIDCache PCIReqIDCache;
 struct PCIDevice {
     DeviceState qdev;
     bool partially_hotplugged;
+    /*
+     * This will be set after the 1st time the device implementation fetches
+     * its dma address space from pci_device_iommu_address_space().  It's used
+     * as a sanity check for platform devices like vIOMMU to detect incorrect
+     * ordering of device realization.
+     */
+    bool address_space_consumed;
 
     /* PCI config space */
     uint8_t *config;
