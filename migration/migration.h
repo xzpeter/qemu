@@ -331,6 +331,12 @@ struct MigrationState {
      * This save hostname when out-going migration starts
      */
     char *hostname;
+
+    /*
+     * Whether we have enabled postcopy preemption or not.  We only enable
+     * preemption if huge page is used, and also user enabled postcopy-preempt.
+     */
+    bool postcopy_preempt_enabled;
 };
 
 void migrate_set_state(int *state, int old_state, int new_state);

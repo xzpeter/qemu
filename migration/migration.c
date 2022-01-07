@@ -3098,6 +3098,11 @@ static int postcopy_start(MigrationState *ms)
                               MIGRATION_STATUS_FAILED);
     }
 
+    /* Decide whether we need postcopy preemption */
+    ms->postcopy_preempt_enabled = postcopy_preempt_needed();
+
+    trace_postcopy_preempt_enabled(ms->postcopy_preempt_enabled);
+
     return ret;
 
 fail_closefb:
