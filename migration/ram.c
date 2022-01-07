@@ -80,6 +80,23 @@
 #define RAM_SAVE_FLAG_XBZRLE   0x40
 /* 0x80 is reserved in migration.h start with 0x100 next */
 #define RAM_SAVE_FLAG_COMPRESS_PAGE    0x100
+/*
+ * This is used to send ram save specific commands.  Currently it's only
+ * enabled in postcopy.  Note that we cannot use QEMU_VM_COMMAND because these
+ * commands need to be sent during part of the section transfer of the RAM, so
+ * it's one layer lower than QEMU_VM_COMMAND and it will only be used for
+ * commands related to RAM save procedure.
+ *
+ * All sub-commands are listed in RAM_CMD_* macros.
+ */
+#define RAM_SAVE_FLAG_CMD      0x200
+
+/*
+ * Sub-commands for RAM_SAVE_FLAG_CMD.
+ */
+
+/* Select (postcopy) channel for future data to be sent */
+#define  RAM_CMD_SELECT_CHANNEL  0x1
 
 XBZRLECacheStats xbzrle_counters;
 
@@ -3646,6 +3663,7 @@ static int ram_load_postcopy(QEMUFile *f)
         void *page_buffer = NULL;
         void *place_source = NULL;
         RAMBlock *block = NULL;
+        uint64_t subcmd, channel;
         uint8_t ch;
         int len;
 
@@ -3768,6 +3786,38 @@ static int ram_load_postcopy(QEMUFile *f)
         case RAM_SAVE_FLAG_EOS:
             /* normal exit */
             multifd_recv_sync_main();
+            break;
+        case RAM_SAVE_FLAG_CMD:
+            /* This is a ram save command, continue parsing sub-cmd */
+            subcmd = qemu_get_be64(f);
+
+            if (addr) {
+                /*
+                 * We always send RAM_SAVE_FLAG_CMD with no offset, if there's
+                 * non-zero addr detected, it must mean something went wrong..
+                 */
+                error_report("Detected illegal RAM_SAVE_FLAG_CMD: 0x%"PRIx64,
+                             (uint64_t)addr | RAM_SAVE_FLAG_CMD);
+                break;
+            }
+
+            switch (subcmd) {
+            case RAM_CMD_SELECT_CHANNEL:
+                channel = qemu_get_be64(f);
+                /* If we parsed a legal channel number, switch channel */
+                if (channel < mis->postcopy_channels) {
+                    mis->postcopy_channel_cur = channel;
+                    tmp_page = &mis->postcopy_tmp_pages[channel];
+                    trace_postcopy_preempt_channel_selected(channel);
+                } else {
+                    error_report("Unknown postcopy channel index (%"PRIu64")", channel);
+                }
+                break;
+            default:
+                error_report("Unknown sub-cmd for RAM_SAVE_FLAG_CMD: %"PRIu64,
+                             subcmd);
+                break;
+            }
             break;
         default:
             error_report("Unknown combination of migration flags: 0x%x"
