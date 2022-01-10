@@ -80,23 +80,6 @@
 #define RAM_SAVE_FLAG_XBZRLE   0x40
 /* 0x80 is reserved in migration.h start with 0x100 next */
 #define RAM_SAVE_FLAG_COMPRESS_PAGE    0x100
-/*
- * This is used to send ram save specific commands.  Currently it's only
- * enabled in postcopy.  Note that we cannot use QEMU_VM_COMMAND because these
- * commands need to be sent during part of the section transfer of the RAM, so
- * it's one layer lower than QEMU_VM_COMMAND and it will only be used for
- * commands related to RAM save procedure.
- *
- * All sub-commands are listed in RAM_CMD_* macros.
- */
-#define RAM_SAVE_FLAG_CMD      0x200
-
-/*
- * Sub-commands for RAM_SAVE_FLAG_CMD.
- */
-
-/* Select (postcopy) channel for future data to be sent */
-#define  RAM_CMD_SELECT_CHANNEL  0x1
 
 XBZRLECacheStats xbzrle_counters;
 
@@ -2303,17 +2286,6 @@ static bool postcopy_needs_preempt(RAMState *rs, PageSearchStatus *pss)
     return postcopy_has_request(rs);
 }
 
-static void postcopy_select_channel(RAMState *rs, uint64_t channel)
-{
-    qemu_put_be64(rs->f, RAM_SAVE_FLAG_CMD);
-    qemu_put_be64(rs->f, RAM_CMD_SELECT_CHANNEL);
-    qemu_put_be64(rs->f, channel);
-
-    ram_counters.transferred += 24;
-
-    trace_postcopy_preempt_select_channel_cmd(channel);
-}
-
 /* Returns true if we preempted precopy, false otherwise */
 static bool postcopy_do_preempt(RAMState *rs, PageSearchStatus *pss)
 {
@@ -2364,14 +2336,39 @@ static void postcopy_preempt_restore(RAMState *rs, PageSearchStatus *pss)
 static void postcopy_preempt_choose_channel(RAMState *rs, PageSearchStatus *pss)
 {
     int channel = pss->postcopy_requested ? RAM_CHANNEL_POSTCOPY : RAM_CHANNEL_PRECOPY;
+    MigrationState *s = migrate_get_current();
+    QEMUFile *next;
 
     if (channel != rs->postcopy_channel) {
-        postcopy_select_channel(rs, channel);
+        if (channel == RAM_CHANNEL_PRECOPY) {
+            next = s->to_dst_file;
+        } else {
+            next = s->postcopy_qemufile_src;
+        }
         /* Update and cache the current channel */
+        rs->f = next;
         rs->postcopy_channel = channel;
+
+        /*
+         * If channel switched, reset last_sent_block since the old sent block
+         * may not be on the same channel.
+         */
+        rs->last_sent_block = NULL;
+
+        trace_postcopy_preempt_switch_channel(channel);
     }
 
     trace_postcopy_preempt_send_host_page(pss->block->idstr, pss->page);
+}
+
+/* We need to make sure rs->f always points to the default channel elsewhere */
+static void postcopy_preempt_reset_channel(RAMState *rs)
+{
+    if (migrate_postcopy_preempt() && migration_in_postcopy()) {
+        rs->postcopy_channel = RAM_CHANNEL_PRECOPY;
+        rs->f = migrate_get_current()->to_dst_file;
+        trace_postcopy_preempt_reset_channel();
+    }
 }
 
 /**
@@ -2438,6 +2435,19 @@ static int ram_save_host_page(RAMState *rs, PageSearchStatus *pss,
     } while ((pss->page < hostpage_boundary) &&
              offset_in_ramblock(pss->block,
                                 ((ram_addr_t)pss->page) << TARGET_PAGE_BITS));
+
+    /*
+     * When with postcopy preempt mode, flush the data as soon as possible for
+     * postcopy requests, because we've already sent a whole huge page, so the
+     * dst node should already have enough resource to atomically filling in
+     * the current missing page.
+     *
+     * More importantly, when using separate postcopy channel, we must do
+     * explicit flush or it won't flush until the buffer is full.
+     */
+    if (migrate_postcopy_preempt() && pss->postcopy_requested) {
+        qemu_fflush(rs->f);
+    }
 
     res = ram_save_release_protection(rs, pss, start_page);
     return (res < 0 ? res : pages);
@@ -3264,6 +3274,8 @@ static int ram_save_iterate(QEMUFile *f, void *opaque)
     }
     qemu_mutex_unlock(&rs->bitmap_mutex);
 
+    postcopy_preempt_reset_channel(rs);
+
     /*
      * Must occur before EOS (or any QEMUFile operation)
      * because of RDMA protocol.
@@ -3330,6 +3342,8 @@ static int ram_save_complete(QEMUFile *f, void *opaque)
         flush_compressed_data(rs);
         ram_control_after_iterate(f, RAM_CONTROL_FINISH);
     }
+
+    postcopy_preempt_reset_channel(rs);
 
     if (ret >= 0) {
         multifd_send_sync_main(rs->f);
@@ -3412,11 +3426,13 @@ static int load_xbzrle(QEMUFile *f, ram_addr_t addr, void *host)
  *
  * @f: QEMUFile where to read the data from
  * @flags: Page flags (mostly to see if it's a continuation of previous block)
+ * @channel: the channel we're using
  */
-static inline RAMBlock *ram_block_from_stream(QEMUFile *f, int flags)
+static inline RAMBlock *ram_block_from_stream(QEMUFile *f, int flags,
+                                              int channel)
 {
     MigrationIncomingState *mis = migration_incoming_get_current();
-    RAMBlock *block = mis->last_recv_block;
+    RAMBlock *block = mis->last_recv_block[channel];
     char id[256];
     uint8_t len;
 
@@ -3443,7 +3459,7 @@ static inline RAMBlock *ram_block_from_stream(QEMUFile *f, int flags)
         return NULL;
     }
 
-    mis->last_recv_block = block;
+    mis->last_recv_block[channel] = block;
 
     return block;
 }
@@ -3862,21 +3878,21 @@ int ram_postcopy_incoming_init(MigrationIncomingState *mis)
  * rcu_read_lock is taken prior to this being called.
  *
  * @f: QEMUFile where to send the data
+ * @channel: the channel to use for loading
  */
-static int ram_load_postcopy(QEMUFile *f)
+static int ram_load_postcopy(QEMUFile *f, int channel)
 {
     int flags = 0, ret = 0;
     bool place_needed = false;
     bool matches_target_page_size = false;
     MigrationIncomingState *mis = migration_incoming_get_current();
-    PostcopyTmpPage *tmp_page = &mis->postcopy_tmp_pages[mis->postcopy_channel_cur];
+    PostcopyTmpPage *tmp_page = &mis->postcopy_tmp_pages[channel];
 
     while (!ret && !(flags & RAM_SAVE_FLAG_EOS)) {
         ram_addr_t addr;
         void *page_buffer = NULL;
         void *place_source = NULL;
         RAMBlock *block = NULL;
-        uint64_t subcmd, channel;
         uint8_t ch;
         int len;
 
@@ -3897,7 +3913,7 @@ static int ram_load_postcopy(QEMUFile *f)
         trace_ram_load_postcopy_loop((uint64_t)addr, flags);
         if (flags & (RAM_SAVE_FLAG_ZERO | RAM_SAVE_FLAG_PAGE |
                      RAM_SAVE_FLAG_COMPRESS_PAGE)) {
-            block = ram_block_from_stream(f, flags);
+            block = ram_block_from_stream(f, flags, channel);
             if (!block) {
                 ret = -EINVAL;
                 break;
@@ -3935,10 +3951,10 @@ static int ram_load_postcopy(QEMUFile *f)
             } else if (tmp_page->host_addr !=
                        host_page_from_ram_block_offset(block, addr)) {
                 /* not the 1st TP within the HP */
-                error_report("Non-same host page detected.  Target host page %p, "
-                             "received host page %p "
+                error_report("Non-same host page detected on channel %d: "
+                             "Target host page %p, received host page %p "
                              "(rb %s offset 0x"RAM_ADDR_FMT" target_pages %d)",
-                             tmp_page->host_addr,
+                             channel, tmp_page->host_addr,
                              host_page_from_ram_block_offset(block, addr),
                              block->idstr, addr, tmp_page->target_pages);
                 ret = -EINVAL;
@@ -4004,38 +4020,6 @@ static int ram_load_postcopy(QEMUFile *f)
             /* normal exit */
             multifd_recv_sync_main();
             break;
-        case RAM_SAVE_FLAG_CMD:
-            /* This is a ram save command, continue parsing sub-cmd */
-            subcmd = qemu_get_be64(f);
-
-            if (addr) {
-                /*
-                 * We always send RAM_SAVE_FLAG_CMD with no offset, if there's
-                 * non-zero addr detected, it must mean something went wrong..
-                 */
-                error_report("Detected illegal RAM_SAVE_FLAG_CMD: 0x%"PRIx64,
-                             (uint64_t)addr | RAM_SAVE_FLAG_CMD);
-                break;
-            }
-
-            switch (subcmd) {
-            case RAM_CMD_SELECT_CHANNEL:
-                channel = qemu_get_be64(f);
-                /* If we parsed a legal channel number, switch channel */
-                if (channel < mis->postcopy_channels) {
-                    mis->postcopy_channel_cur = channel;
-                    tmp_page = &mis->postcopy_tmp_pages[channel];
-                    trace_postcopy_preempt_channel_selected(channel);
-                } else {
-                    error_report("Unknown postcopy channel index (%"PRIu64")", channel);
-                }
-                break;
-            default:
-                error_report("Unknown sub-cmd for RAM_SAVE_FLAG_CMD: %"PRIu64,
-                             subcmd);
-                break;
-            }
-            break;
         default:
             error_report("Unknown combination of migration flags: 0x%x"
                          " (postcopy mode)", flags);
@@ -4069,6 +4053,28 @@ static int ram_load_postcopy(QEMUFile *f)
 
     return ret;
 }
+
+void *postcopy_preempt_thread(void *opaque)
+{
+    MigrationIncomingState *mis = opaque;
+    int ret;
+
+    trace_postcopy_preempt_thread_entry();
+
+    rcu_register_thread();
+
+    qemu_sem_post(&mis->postcopy_prio_thread_sem);
+
+    /* Sending RAM_SAVE_FLAG_EOS to terminate this thread */
+    ret = ram_load_postcopy(mis->postcopy_qemufile_dst, RAM_CHANNEL_POSTCOPY);
+
+    rcu_unregister_thread();
+
+    trace_postcopy_preempt_thread_exit();
+
+    return ret == 0 ? NULL : (void *)-1;
+}
+
 
 static bool postcopy_is_advised(void)
 {
@@ -4181,7 +4187,7 @@ static int ram_load_precopy(QEMUFile *f)
 
         if (flags & (RAM_SAVE_FLAG_ZERO | RAM_SAVE_FLAG_PAGE |
                      RAM_SAVE_FLAG_COMPRESS_PAGE | RAM_SAVE_FLAG_XBZRLE)) {
-            RAMBlock *block = ram_block_from_stream(f, flags);
+            RAMBlock *block = ram_block_from_stream(f, flags, RAM_CHANNEL_PRECOPY);
 
             host = host_from_ram_block_offset(block, addr);
             /*
@@ -4358,7 +4364,12 @@ static int ram_load(QEMUFile *f, void *opaque, int version_id)
      */
     WITH_RCU_READ_LOCK_GUARD() {
         if (postcopy_running) {
-            ret = ram_load_postcopy(f);
+            /*
+             * Note!  Here RAM_CHANNEL_PRECOPY is the precopy channel of
+             * postcopy migration, we have another RAM_CHANNEL_POSTCOPY to
+             * service fast page faults.
+             */
+            ret = ram_load_postcopy(f, RAM_CHANNEL_PRECOPY);
         } else {
             ret = ram_load_precopy(f);
         }
@@ -4534,6 +4545,11 @@ bool postcopy_preempt_needed(void)
     }
 
     return true;
+}
+
+void postcopy_preempt_shutdown_file(MigrationState *s)
+{
+    qemu_put_be64(s->postcopy_qemufile_src, RAM_SAVE_FLAG_EOS);
 }
 
 static SaveVMHandlers savevm_ram_handlers = {

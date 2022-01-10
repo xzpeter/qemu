@@ -554,6 +554,13 @@ int postcopy_ram_incoming_cleanup(MigrationIncomingState *mis)
 {
     trace_postcopy_ram_incoming_cleanup_entry();
 
+    if (mis->postcopy_prio_thread_created) {
+        /* Tell it to quit */
+        qemu_file_shutdown(mis->postcopy_qemufile_dst);
+        qemu_thread_join(&mis->postcopy_prio_thread);
+        mis->postcopy_prio_thread_created = false;
+    }
+
     if (mis->have_fault_thread) {
         Error *local_err = NULL;
 
@@ -1133,9 +1140,6 @@ static int postcopy_temp_pages_setup(MigrationIncomingState *mis)
         tmp_page->target_pages = 0;
     }
 
-    /* Always use index=0 as the default channel */
-    mis->postcopy_channel_cur = 0;
-
     /*
      * Map large zero page when kernel can't use UFFDIO_ZEROPAGE for hugepages
      */
@@ -1183,7 +1187,7 @@ int postcopy_ram_incoming_setup(MigrationIncomingState *mis)
     }
 
     qemu_sem_init(&mis->fault_thread_sem, 0);
-    qemu_thread_create(&mis->fault_thread, "postcopy/fault",
+    qemu_thread_create(&mis->fault_thread, "qemu/fault-default",
                        postcopy_ram_fault_thread, mis, QEMU_THREAD_JOINABLE);
     qemu_sem_wait(&mis->fault_thread_sem);
     qemu_sem_destroy(&mis->fault_thread_sem);
@@ -1199,6 +1203,17 @@ int postcopy_ram_incoming_setup(MigrationIncomingState *mis)
         /* Error dumped in the sub-function */
         return -1;
     }
+
+    /*
+     * This thread needs to be created after the temp pages because it'll fetch
+     * RAM_CHANNEL_POSTCOPY PostcopyTmpPage immediately.
+     */
+    qemu_sem_init(&mis->postcopy_prio_thread_sem, 0);
+    qemu_thread_create(&mis->postcopy_prio_thread, "qemu/fault-fast",
+                       postcopy_preempt_thread, mis, QEMU_THREAD_JOINABLE);
+    qemu_sem_wait(&mis->postcopy_prio_thread_sem);
+    qemu_sem_destroy(&mis->postcopy_prio_thread_sem);
+    mis->postcopy_prio_thread_created = true;
 
     trace_postcopy_ram_enable_notify();
 
