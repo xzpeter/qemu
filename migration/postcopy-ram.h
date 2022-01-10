@@ -186,4 +186,7 @@ enum PostcopyChannels {
     RAM_CHANNEL_MAX,
 };
 
+bool postcopy_preempt_new_channel(MigrationIncomingState *mis, QEMUFile *file);
+int postcopy_preempt_setup(MigrationState *s, Error **errp);
+
 #endif

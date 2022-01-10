@@ -112,6 +112,8 @@ struct MigrationIncomingState {
     int       postcopy_channels;
     /* Current index of the channel */
     int       postcopy_channel_cur;
+    /* QEMUFile for postcopy only; it'll be handled by a separate thread */
+    QEMUFile *postcopy_qemufile_dst;
     /*
      * An array of temp host huge pages to be used, one for each postcopy
      * channel.
@@ -192,6 +194,8 @@ struct MigrationState {
     QEMUBH *cleanup_bh;
     /* Protected by qemu_file_lock */
     QEMUFile *to_dst_file;
+    /* Postcopy specific transfer channel */
+    QEMUFile *postcopy_qemufile_src;
     QIOChannelBuffer *bioc;
     /*
      * Protects to_dst_file/from_dst_file pointers.  We need to make sure we

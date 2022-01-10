@@ -32,6 +32,8 @@
 #include "trace.h"
 #include "hw/boards.h"
 #include "exec/ramblock.h"
+#include "socket.h"
+#include "qemu-file-channel.h"
 
 /* Arbitrary limit on size of each discard command,
  * keeps them around ~200 bytes
@@ -1516,4 +1518,35 @@ void postcopy_unregister_shared_ufd(struct PostCopyFD *pcfd)
             return;
         }
     }
+}
+
+bool postcopy_preempt_new_channel(MigrationIncomingState *mis, QEMUFile *file)
+{
+    mis->postcopy_qemufile_dst = file;
+
+    trace_postcopy_preempt_new_channel();
+
+    /* Start the migration immediately */
+    return true;
+}
+
+int postcopy_preempt_setup(MigrationState *s, Error **errp)
+{
+    QIOChannel *ioc;
+
+    if (!migrate_postcopy_preempt()) {
+        return 0;
+    }
+
+    ioc = socket_send_channel_create_sync(errp);
+
+    if (ioc == NULL) {
+        return -1;
+    }
+
+    s->postcopy_qemufile_src = qemu_fopen_channel_output(ioc);
+
+    trace_postcopy_preempt_new_channel();
+
+    return 0;
 }
