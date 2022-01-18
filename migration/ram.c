@@ -3415,7 +3415,8 @@ static int load_xbzrle(QEMUFile *f, ram_addr_t addr, void *host)
  */
 static inline RAMBlock *ram_block_from_stream(QEMUFile *f, int flags)
 {
-    static RAMBlock *block;
+    MigrationIncomingState *mis = migration_incoming_get_current();
+    RAMBlock *block = mis->last_recv_block;
     char id[256];
     uint8_t len;
 
@@ -3441,6 +3442,8 @@ static inline RAMBlock *ram_block_from_stream(QEMUFile *f, int flags)
         error_report("block %s should not be migrated !", id);
         return NULL;
     }
+
+    mis->last_recv_block = block;
 
     return block;
 }
