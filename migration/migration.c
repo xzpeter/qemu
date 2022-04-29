@@ -62,6 +62,7 @@
 #include "sysemu/cpus.h"
 #include "yank_functions.h"
 #include "sysemu/qtest.h"
+#include "exec/ramblock.h"
 
 #define MAX_THROTTLE  (128 << 20)      /* Migration transfer speed throttling */
 
@@ -1363,10 +1364,28 @@ static bool migrate_caps_check(bool *cap_list,
                    "Zero copy only available for non-compressed non-TLS multifd migration");
         return false;
     }
+
+    if (cap_list[MIGRATION_CAPABILITY_HUGETLB_DOUBLEMAP]) {
+        RAMBlock *rb;
+
+        /* TODO: kernel version check on MADV_SPLIT upon hugetlb */
+        RAMBLOCK_FOREACH_NOT_IGNORED(rb) {
+            if (qemu_ram_is_hugetlb(rb) && !qemu_ram_is_shared(rb)) {
+                error_setg(errp, "RAMBlock '%s' needs to be shared for doublemap",
+                           rb->idstr);
+                return false;
+            }
+        }
+    }
 #else
     if (cap_list[MIGRATION_CAPABILITY_ZERO_COPY_SEND]) {
         error_setg(errp,
                    "Zero copy currently only available on Linux");
+        return false;
+    }
+
+    if (cap_list[MIGRATION_CAPABILITY_HUGETLB_DOUBLEMAP]) {
+        error_setg(errp, "Hugetlb doublemap is only supported on Linux");
         return false;
     }
 #endif
@@ -2790,6 +2809,13 @@ bool migrate_postcopy_preempt(void)
     s = migrate_get_current();
 
     return s->enabled_capabilities[MIGRATION_CAPABILITY_POSTCOPY_PREEMPT];
+}
+
+bool migrate_hugetlb_doublemap(void)
+{
+    MigrationState *s = migrate_get_current();
+
+    return s->enabled_capabilities[MIGRATION_CAPABILITY_HUGETLB_DOUBLEMAP];
 }
 
 /* migration thread support */
@@ -4472,7 +4498,9 @@ static Property migration_properties[] = {
     DEFINE_PROP_MIG_CAP("x-return-path", MIGRATION_CAPABILITY_RETURN_PATH),
     DEFINE_PROP_MIG_CAP("x-multifd", MIGRATION_CAPABILITY_MULTIFD),
     DEFINE_PROP_MIG_CAP("x-background-snapshot",
-            MIGRATION_CAPABILITY_BACKGROUND_SNAPSHOT),
+                        MIGRATION_CAPABILITY_BACKGROUND_SNAPSHOT),
+    DEFINE_PROP_MIG_CAP("hugetlb-doublemap",
+                        MIGRATION_CAPABILITY_HUGETLB_DOUBLEMAP),
 #ifdef CONFIG_LINUX
     DEFINE_PROP_MIG_CAP("x-zero-copy-send",
             MIGRATION_CAPABILITY_ZERO_COPY_SEND),
