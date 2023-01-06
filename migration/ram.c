@@ -3891,6 +3891,22 @@ static int migrate_hugetlb_doublemap_init(void)
 
     RAMBLOCK_FOREACH_NOT_IGNORED(rb) {
         if (qemu_ram_is_hugetlb(rb)) {
+#if QEMU_MADV_SPLIT == QEMU_MADV_INVALID
+#error "MADV_SPLIT not detected!"
+#endif
+            /*
+             * MADV_SPLIT implicitly enables doublemap mode for hugetlb on
+             * the guest mapped ranges.  If that fails (e.g. on old
+             * kernels) we need to fail the migration.  Note, the
+             * host_mirror mapping below can be kept as hugely mapped.
+             */
+            if (qemu_madvise(qemu_ram_get_host_addr(rb), rb->mmap_length,
+                             QEMU_MADV_SPLIT)) {
+                error_report("%s: madvise(MADV_SPLIT) required for doublemap",
+                             __func__);
+                return -1;
+            }
+
             /*
              * Firstly, we remap the same ramblock into another range of
              * virtual address, so that we can write to the pages without
