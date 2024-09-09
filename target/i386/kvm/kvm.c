@@ -295,6 +295,7 @@ static int kvm_get_tsc(CPUState *cs)
     }
 
     env->tsc = value;
+    trace_kvm_tsc_get(cs->cpu_index, value);
     return 0;
 }
 
@@ -3850,6 +3851,9 @@ static int kvm_put_msrs(X86CPU *cpu, int level)
      * for normal writeback. Limit them to reset or full state updates.
      */
     if (level >= KVM_PUT_RESET_STATE) {
+        CPUState *cs = CPU(cpu);
+
+        trace_kvm_tsc_put(cs->cpu_index, env->tsc);
         kvm_msr_entry_add(cpu, MSR_IA32_TSC, env->tsc);
         kvm_msr_entry_add(cpu, MSR_KVM_SYSTEM_TIME, env->system_time_msr);
         kvm_msr_entry_add(cpu, MSR_KVM_WALL_CLOCK, env->wall_clock_msr);
