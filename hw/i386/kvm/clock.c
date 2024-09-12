@@ -25,6 +25,7 @@
 #include "hw/i386/kvm/clock.h"
 #include "hw/qdev-properties.h"
 #include "qapi/error.h"
+#include "trace.h"
 
 #include <linux/kvm.h>
 #include "standard-headers/asm-x86/kvm_para.h"
@@ -156,6 +157,8 @@ static void kvm_update_clock(KVMClockState *s)
      *               read from memory
      */
     s->clock_is_reliable = kvm_has_adjust_clock_stable();
+
+    trace_kvm_clock_get(s->clock, s->clock_is_reliable);
 }
 
 static void do_kvmclock_ctrl(CPUState *cpu, run_on_cpu_data data)
@@ -205,6 +208,8 @@ static void kvmclock_put(KVMClockState *s)
         abort();
     }
 
+    trace_kvm_clock_set(s->clock, s->clock_is_reliable);
+
     if (!cap_clock_ctrl) {
         return;
     }
@@ -212,6 +217,8 @@ static void kvmclock_put(KVMClockState *s)
     CPU_FOREACH(cpu) {
         run_on_cpu(cpu, do_kvmclock_ctrl, RUN_ON_CPU_NULL);
     }
+
+    trace_kvm_clock_control();
 }
 
 static void kvmclock_get(KVMClockState *s)
