@@ -161,61 +161,72 @@ static void do_kvmclock_ctrl(CPUState *cpu, run_on_cpu_data data)
     }
 }
 
+static void kvmclock_put(KVMClockState *s)
+{
+    int cap_clock_ctrl = kvm_check_extension(kvm_state, KVM_CAP_KVMCLOCK_CTRL);
+    struct kvm_clock_data data = {};
+    uint64_t pvclock_via_mem;
+    CPUState *cpu;
+    int ret;
+
+    /*
+     * If the host where s->clock was read did not support reliable
+     * KVM_GET_CLOCK, read kvmclock value from memory.
+     */
+    if (!s->clock_is_reliable) {
+        pvclock_via_mem = kvmclock_current_nsec(s);
+        /* We can't rely on the saved clock value, just discard it */
+        if (pvclock_via_mem) {
+            s->clock = pvclock_via_mem;
+        }
+    }
+
+    s->clock_valid = false;
+
+    data.clock = s->clock;
+    ret = kvm_vm_ioctl(kvm_state, KVM_SET_CLOCK, &data);
+    if (ret < 0) {
+        fprintf(stderr, "KVM_SET_CLOCK failed: %s\n", strerror(-ret));
+        abort();
+    }
+
+    if (!cap_clock_ctrl) {
+        return;
+    }
+
+    CPU_FOREACH(cpu) {
+        run_on_cpu(cpu, do_kvmclock_ctrl, RUN_ON_CPU_NULL);
+    }
+}
+
+static void kvmclock_get(KVMClockState *s)
+{
+    if (s->clock_valid) {
+        return;
+    }
+
+    s->runstate_paused = runstate_check(RUN_STATE_PAUSED);
+
+    kvm_synchronize_all_tsc();
+
+    kvm_update_clock(s);
+    /*
+     * If the VM is stopped, declare the clock state valid to
+     * avoid re-reading it on next vmsave (which would return
+     * a different value). Will be reset when the VM is continued.
+     */
+    s->clock_valid = true;
+}
+
 static void kvmclock_vm_state_change(void *opaque, bool running,
                                      RunState state)
 {
     KVMClockState *s = opaque;
-    CPUState *cpu;
-    int cap_clock_ctrl = kvm_check_extension(kvm_state, KVM_CAP_KVMCLOCK_CTRL);
-    int ret;
 
     if (running) {
-        struct kvm_clock_data data = {};
-
-        /*
-         * If the host where s->clock was read did not support reliable
-         * KVM_GET_CLOCK, read kvmclock value from memory.
-         */
-        if (!s->clock_is_reliable) {
-            uint64_t pvclock_via_mem = kvmclock_current_nsec(s);
-            /* We can't rely on the saved clock value, just discard it */
-            if (pvclock_via_mem) {
-                s->clock = pvclock_via_mem;
-            }
-        }
-
-        s->clock_valid = false;
-
-        data.clock = s->clock;
-        ret = kvm_vm_ioctl(kvm_state, KVM_SET_CLOCK, &data);
-        if (ret < 0) {
-            fprintf(stderr, "KVM_SET_CLOCK failed: %s\n", strerror(-ret));
-            abort();
-        }
-
-        if (!cap_clock_ctrl) {
-            return;
-        }
-        CPU_FOREACH(cpu) {
-            run_on_cpu(cpu, do_kvmclock_ctrl, RUN_ON_CPU_NULL);
-        }
+        kvmclock_put(s);
     } else {
-
-        if (s->clock_valid) {
-            return;
-        }
-
-        s->runstate_paused = runstate_check(RUN_STATE_PAUSED);
-
-        kvm_synchronize_all_tsc();
-
-        kvm_update_clock(s);
-        /*
-         * If the VM is stopped, declare the clock state valid to
-         * avoid re-reading it on next vmsave (which would return
-         * a different value). Will be reset when the VM is continued.
-         */
-        s->clock_valid = true;
+        kvmclock_get(s);
     }
 }
 
