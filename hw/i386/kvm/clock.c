@@ -321,11 +321,21 @@ static int kvmclock_pre_save(void *opaque)
     return 0;
 }
 
+static int kvmclock_post_load(void *opaque, int version_id)
+{
+    KVMClockState *s = opaque;
+
+    kvmclock_put(s);
+
+    return 0;
+}
+
 static const VMStateDescription kvmclock_vmsd = {
     .name = "kvmclock",
     .version_id = 1,
     .minimum_version_id = 1,
     .pre_load = kvmclock_pre_load,
+    .post_load = kvmclock_post_load,
     .pre_save = kvmclock_pre_save,
     .fields = (const VMStateField[]) {
         VMSTATE_UINT64(clock, KVMClockState),
