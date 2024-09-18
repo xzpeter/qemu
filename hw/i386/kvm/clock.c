@@ -70,6 +70,9 @@ struct pvclock_vcpu_time_info {
     uint8_t    pad[2];
 } __attribute__((__packed__)); /* 32 bytes */
 
+/* Points to the current kvmclock when enabled */
+static struct KVMClockState *current_clock;
+
 static uint64_t kvmclock_current_nsec(KVMClockState *s)
 {
     CPUState *cpu = first_cpu;
@@ -391,7 +394,8 @@ void kvmclock_create(bool create_always)
     if (create_always ||
         cpu->env.features[FEAT_KVM] & ((1ULL << KVM_FEATURE_CLOCKSOURCE) |
                                        (1ULL << KVM_FEATURE_CLOCKSOURCE2))) {
-        sysbus_create_simple(TYPE_KVM_CLOCK, -1, NULL);
+        current_clock = KVM_CLOCK(
+            sysbus_create_simple(TYPE_KVM_CLOCK, -1, NULL));
     }
 }
 
