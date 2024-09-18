@@ -283,10 +283,6 @@ static int kvm_get_tsc(CPUState *cs)
     uint64_t value;
     int ret;
 
-    if (env->tsc_valid) {
-        return 0;
-    }
-
     env->tsc_valid = !runstate_is_running();
 
     ret = kvm_get_one_msr(cpu, MSR_IA32_TSC, &value);

@@ -221,6 +221,12 @@ static void kvmclock_put(KVMClockState *s)
     trace_kvm_clock_control();
 }
 
+static void kvm_update_clock_with_tsc(KVMClockState *s)
+{
+    kvm_update_clock(s);
+    kvm_synchronize_all_tsc();
+}
+
 static void kvmclock_get(KVMClockState *s)
 {
     if (s->clock_valid) {
@@ -229,9 +235,7 @@ static void kvmclock_get(KVMClockState *s)
 
     s->runstate_paused = runstate_check(RUN_STATE_PAUSED);
 
-    kvm_synchronize_all_tsc();
-
-    kvm_update_clock(s);
+    kvm_update_clock_with_tsc(s);
     /*
      * If the VM is stopped, declare the clock state valid to
      * avoid re-reading it on next vmsave (which would return
@@ -322,7 +326,7 @@ static int kvmclock_pre_save(void *opaque)
     KVMClockState *s = opaque;
 
     if (!s->runstate_paused) {
-        kvm_update_clock(s);
+        kvm_update_clock_with_tsc(s);
     }
 
     return 0;
