@@ -39,6 +39,12 @@ struct KVMClockState {
     /*< public >*/
 
     uint64_t clock;
+    /*
+     * Reflects the validity of the userspace kvmclock value.  When true,
+     * QEMU maintains the accurate kvmclock value (in "clock" variable).
+     * When false, kernel/KVM maintains the value, and when we need the
+     * value it needs to be fetched after VM stopped.
+     */
     bool clock_valid;
 
     /* whether the 'clock' value was obtained in the 'paused' state */
@@ -169,6 +175,15 @@ static void kvmclock_put(KVMClockState *s)
     CPUState *cpu;
     int ret;
 
+    if (!s->clock_valid) {
+        /*
+         * We could have put() already, so skip this one.  In all cases, it
+         * says the cached value is not valid, so don't put to not
+         * overwrite something that the kernel actively maintains.
+         */
+        return;
+    }
+
     /*
      * If the host where s->clock was read did not support reliable
      * KVM_GET_CLOCK, read kvmclock value from memory.
@@ -271,6 +286,12 @@ static int kvmclock_pre_load(void *opaque)
     KVMClockState *s = opaque;
 
     s->clock_is_reliable = false;
+    /*
+     * We're going to load the clock very soon!  That means we maintain
+     * the clock value, so make it valid (so that later we know we can
+     * safely put() after fetching from src kvmclock).
+     */
+    s->clock_valid = true;
 
     return 0;
 }
