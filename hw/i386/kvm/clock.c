@@ -344,6 +344,8 @@ static const VMStateDescription kvmclock_vmsd = {
     .pre_load = kvmclock_pre_load,
     .post_load = kvmclock_post_load,
     .pre_save = kvmclock_pre_save,
+    /* Need to be migrated before vCPUs */
+    .priority = MIG_PRI_KVMCLOCK,
     .fields = (const VMStateField[]) {
         VMSTATE_UINT64(clock, KVMClockState),
         VMSTATE_END_OF_LIST()
