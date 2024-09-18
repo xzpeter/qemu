@@ -73,6 +73,20 @@ struct pvclock_vcpu_time_info {
 /* Points to the current kvmclock when enabled */
 static struct KVMClockState *current_clock;
 
+static uint64_t kvm_clock_get(KVMClockState *s)
+{
+    struct kvm_clock_data data;
+    int ret;
+
+    ret = kvm_vm_ioctl(kvm_state, KVM_GET_CLOCK, &data);
+    if (ret < 0) {
+        fprintf(stderr, "KVM_GET_CLOCK failed: %s\n", strerror(-ret));
+        abort();
+    }
+
+    return data.clock;
+}
+
 static uint64_t kvmclock_current_nsec(KVMClockState *s)
 {
     CPUState *cpu = first_cpu;
@@ -110,15 +124,7 @@ static uint64_t kvmclock_current_nsec(KVMClockState *s)
 
 static void kvm_update_clock(KVMClockState *s)
 {
-    struct kvm_clock_data data;
-    int ret;
-
-    ret = kvm_vm_ioctl(kvm_state, KVM_GET_CLOCK, &data);
-    if (ret < 0) {
-        fprintf(stderr, "KVM_GET_CLOCK failed: %s\n", strerror(-ret));
-                abort();
-    }
-    s->clock = data.clock;
+    s->clock = kvm_clock_get(s);
 
     /* If kvm_has_adjust_clock_stable() is false, KVM_GET_CLOCK returns
      * essentially CLOCK_MONOTONIC plus a guest-specific adjustment.  This
