@@ -578,4 +578,10 @@ int kvm_set_memory_attributes_shared(hwaddr start, uint64_t size);
 
 int kvm_convert_memory(hwaddr start, hwaddr size, bool to_private);
 
+/*
+ * Returns the tsc delta since kvmclock synchronized.  This can be used to
+ * provide a more accurate tsc with caliberation.
+ */
+uint64_t kvm_clock_caliberate_tsc(uint64_t cpu_khz);
+
 #endif

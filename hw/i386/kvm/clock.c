@@ -87,6 +87,26 @@ static uint64_t kvm_clock_get(KVMClockState *s)
     return data.clock;
 }
 
+uint64_t kvm_clock_caliberate_tsc(uint64_t cpu_khz)
+{
+    struct KVMClockState *s;
+    double freq_ns;
+    uint64_t now;
+
+    if (!cpu_khz || !current_clock) {
+        return 0;
+    }
+
+    s = current_clock;
+
+    freq_ns = 1.0 * cpu_khz / 1e6;
+    now = kvm_clock_get(s);
+    assert(now >= s->clock);
+
+    /* kvmclock is always in unit of nanosecond */
+    return (uint64_t) ((now - s->clock) * freq_ns);
+}
+
 static uint64_t kvmclock_current_nsec(KVMClockState *s)
 {
     CPUState *cpu = first_cpu;

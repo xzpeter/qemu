@@ -280,7 +280,7 @@ static int kvm_get_tsc(CPUState *cs)
 {
     X86CPU *cpu = X86_CPU(cs);
     CPUX86State *env = &cpu->env;
-    uint64_t value;
+    uint64_t value, delta;
     int ret;
 
     env->tsc_valid = !runstate_is_running();
@@ -290,8 +290,14 @@ static int kvm_get_tsc(CPUState *cs)
         return ret;
     }
 
-    env->tsc = value;
-    trace_kvm_tsc_get(cs->cpu_index, value);
+    delta = kvm_clock_caliberate_tsc(env->tsc_khz);
+    /*
+     * This makes the TSC counter caliberated to when we sync kvmclock.  On
+     * src side we need to deduct the diff.
+     */
+    env->tsc = value - delta;
+    trace_kvm_tsc_get(cs->cpu_index, value, delta);
+
     return 0;
 }
 
@@ -3848,9 +3854,19 @@ static int kvm_put_msrs(X86CPU *cpu, int level)
      */
     if (level >= KVM_PUT_RESET_STATE) {
         CPUState *cs = CPU(cpu);
+        uint64_t delta = 0;
 
-        trace_kvm_tsc_put(cs->cpu_index, env->tsc);
+        /*
+         * On dest side if it's during incoming migration, caliberate tsc
+         * values by offseting with kvmclock updates previously.
+         */
+        if (runstate_check(RUN_STATE_INMIGRATE)) {
+            delta = kvm_clock_caliberate_tsc(env->tsc_khz);
+        }
+        trace_kvm_tsc_put(cs->cpu_index, env->tsc, delta);
+        env->tsc += delta;
         kvm_msr_entry_add(cpu, MSR_IA32_TSC, env->tsc);
+
         kvm_msr_entry_add(cpu, MSR_KVM_SYSTEM_TIME, env->system_time_msr);
         kvm_msr_entry_add(cpu, MSR_KVM_WALL_CLOCK, env->wall_clock_msr);
         if (env->features[FEAT_KVM] & (1 << KVM_FEATURE_ASYNC_PF_INT)) {
