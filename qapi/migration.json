@@ -2265,33 +2265,6 @@
   'returns': [ 'DirtyLimitInfo' ] }
 
 ##
-# @MigrationThreadInfo:
-#
-# Information about migrationthreads
-#
-# @name: the name of migration thread
-#
-# @thread-id: ID of the underlying host thread
-#
-# Since: 7.2
-##
-{ 'struct': 'MigrationThreadInfo',
-  'data': {'name': 'str',
-           'thread-id': 'int'} }
-
-##
-# @query-migrationthreads:
-#
-# Returns information of migration threads
-#
-# Returns: @MigrationThreadInfo
-#
-# Since: 7.2
-##
-{ 'command': 'query-migrationthreads',
-  'returns': ['MigrationThreadInfo'] }
-
-##
 # @snapshot-save:
 #
 # Save a VM snapshot

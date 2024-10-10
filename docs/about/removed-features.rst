@@ -693,6 +693,12 @@ Use ``multifd-channels`` instead.
 
 Use ``multifd-compression`` instead.
 
+``query-migrationthreads`` (removed in 9.2)
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+
+Removed with no replacement.  For debugging purpose, please use ``-name
+$VM,debug-threads=on`` instead.
+
 QEMU Machine Protocol (QMP) events
 ----------------------------------
 
