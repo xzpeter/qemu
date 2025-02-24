@@ -4422,12 +4422,42 @@ void kvm_mark_guest_state_protected(void)
     kvm_state->guest_state_protected = true;
 }
 
-int kvm_create_guest_memfd(uint64_t size, uint64_t flags, Error **errp)
+#define  KB  (1UL << 10)
+#define  MB  (1UL << 20)
+#define  GB  (1UL << 30)
+
+static uint64_t gmem_psize_to_flag(uint64_t pagesize)
+{
+    uint64_t flags = 0;
+
+    switch (pagesize) {
+    case 2 * MB:
+        flags = KVM_GUEST_MEMFD_HUGE_2MB;
+        break;
+    case 1 * GB:
+        flags = KVM_GUEST_MEMFD_HUGE_1GB;
+        break;
+    case 0:
+        break;
+    default:
+        error_report("Unknown huge page size: %"PRIu64, pagesize);
+        abort();
+    }
+
+    if (flags) {
+        flags |= KVM_GUEST_MEMFD_HUGETLB;
+    }
+
+    return flags;
+}
+
+static int __kvm_create_guest_memfd(uint64_t size, uint64_t pagesize,
+                                    uint64_t flags, Error **errp)
 {
     int fd;
     struct kvm_create_guest_memfd guest_memfd = {
         .size = size,
-        .flags = flags,
+        .flags = flags | gmem_psize_to_flag(pagesize),
     };
 
     if (!kvm_guest_memfd_supported) {
@@ -4442,4 +4472,15 @@ int kvm_create_guest_memfd(uint64_t size, uint64_t flags, Error **errp)
     }
 
     return fd;
+}
+
+int kvm_create_guest_memfd(uint64_t size, uint64_t flags, Error **errp)
+{
+    return __kvm_create_guest_memfd(size, 0, flags, errp);
+}
+
+int kvm_create_guest_memfd_huge(uint64_t size, uint64_t pagesize,
+                                uint64_t flags, Error **errp)
+{
+    return __kvm_create_guest_memfd(size, pagesize, flags, errp);
 }

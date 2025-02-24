@@ -134,3 +134,9 @@ int kvm_create_guest_memfd(uint64_t size, uint64_t flags, Error **errp)
 {
     return -ENOSYS;
 }
+
+int kvm_create_guest_memfd_huge(uint64_t size, uint64_t pagesize,
+                                uint64_t flags, Error **errp)
+{
+    return -ENOSYS;
+}
