@@ -73,11 +73,9 @@ memfd_backend_memory_alloc(HostMemoryBackend *backend, Error **errp)
             return false;
         }
 
-        /*
-         * TODO:
-         * - add hugetlb support in the flags
-         */
-        fd = kvm_create_guest_memfd(backend->size, KVM_GUEST_MEMFD_SHARED, errp);
+        fd = kvm_create_guest_memfd_huge(backend->size,
+                                         m->hugetlb ? m->hugetlbsize : 0,
+                                         KVM_GUEST_MEMFD_SHARED, errp);
         if (fd < 0) {
             return false;
         }
