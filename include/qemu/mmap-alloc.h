@@ -5,6 +5,7 @@ typedef enum {
     QEMU_FS_TYPE_UNKNOWN = 0,
     QEMU_FS_TYPE_TMPFS,
     QEMU_FS_TYPE_HUGETLBFS,
+    QEMU_FS_TYPE_GMEM,
     QEMU_FS_TYPE_NUM,
 } QemuFsType;
 

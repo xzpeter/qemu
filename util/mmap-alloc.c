@@ -24,6 +24,7 @@
 #include "qemu/error-report.h"
 
 #define HUGETLBFS_MAGIC       0x958458f6
+#define GUEST_MEMORY_MAGIC    0x474d454d  /* "GMEM" */
 
 #ifdef CONFIG_LINUX
 #include <sys/vfs.h>
@@ -49,6 +50,8 @@ QemuFsType qemu_fd_getfs(int fd)
         return QEMU_FS_TYPE_TMPFS;
     case HUGETLBFS_MAGIC:
         return QEMU_FS_TYPE_HUGETLBFS;
+    case GUEST_MEMORY_MAGIC:
+        return QEMU_FS_TYPE_GMEM;
     default:
         return QEMU_FS_TYPE_UNKNOWN;
     }
@@ -68,7 +71,9 @@ size_t qemu_fd_getpagesize(int fd)
             ret = fstatfs(fd, &fs);
         } while (ret != 0 && errno == EINTR);
 
-        if (ret == 0 && fs.f_type == HUGETLBFS_MAGIC) {
+        if (ret == 0 &&
+            (fs.f_type == HUGETLBFS_MAGIC ||
+             fs.f_type == GUEST_MEMORY_MAGIC)) {
             return fs.f_bsize;
         }
     }
