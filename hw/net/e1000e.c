@@ -89,7 +89,7 @@ struct E1000EState {
 #define E1000E_IO_IDX       2
 #define E1000E_MSIX_IDX     3
 
-#define E1000E_MMIO_SIZE    (128 * KiB)
+#define E1000E_MMIO_SIZE    (128 * MiB)
 #define E1000E_FLASH_SIZE   (128 * KiB)
 #define E1000E_IO_SIZE      (32)
 #define E1000E_MSIX_SIZE    (16 * KiB)
