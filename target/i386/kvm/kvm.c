@@ -6003,7 +6003,7 @@ static int kvm_handle_hc_map_gpa_range(struct kvm_run *run)
 {
     uint64_t gpa, size, attributes;
 
-    if (!machine_require_guest_memfd(current_machine))
+    if (!machine_require_guest_memfd_private(current_machine))
         return -EINVAL;
 
     gpa = run->hypercall.args[0];
